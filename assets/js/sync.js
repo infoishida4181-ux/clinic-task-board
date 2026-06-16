@@ -31,6 +31,29 @@
       ensureLoggedIn();
       try {
         const remote = await client.loadAll();
+        if (remote.taskTypes.length === 0) {
+          const seedSource = storage.hasStoredTaskTypes() && localState.taskTypes.length
+            ? localState
+            : storage.createInitialState();
+          const restored = storage.restoreInitialTaskTypes({
+            ...seedSource,
+            tasks: remote.tasks.length ? remote.tasks : seedSource.tasks
+          });
+          const seededState = storage.normalizeState({
+            ...restored.state,
+            sync: {
+              mode: "supabase",
+              last_loaded_at: new Date().toISOString(),
+              last_synced_at: new Date().toISOString()
+            }
+          });
+          await client.upsertAll(seededState);
+          status = "supabase";
+          lastError = "";
+          storage.saveLocalState(seededState);
+          return seededState;
+        }
+
         const normalized = storage.normalizeState({
           version: 2,
           taskTypes: remote.taskTypes.map((type) => ({
@@ -79,15 +102,18 @@
 
     async function migrateLocalToSupabase(state) {
       ensureLoggedIn();
-      await client.upsertAll(state);
-      state.sync = {
+      const restored = storage.restoreInitialTaskTypes(state);
+      const migrationState = storage.normalizeState(restored.state);
+      await client.upsertAll(migrationState);
+      migrationState.sync = {
         ...(state.sync || {}),
         mode: "supabase",
         last_synced_at: new Date().toISOString()
       };
-      storage.saveLocalState(state);
+      storage.saveLocalState(migrationState);
       status = "supabase";
       lastError = "";
+      return loadFromSupabase(migrationState);
     }
 
     function ensureConfigured() {

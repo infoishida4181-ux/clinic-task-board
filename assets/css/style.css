@@ -500,6 +500,13 @@ textarea {
   scroll-margin-top: 14px;
 }
 
+.type-picker-warning {
+  grid-column: 1 / -1;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-color: #ffd4a8;
+}
+
 .type-picker button,
 .due-picker button {
   min-height: 48px;

@@ -70,6 +70,7 @@ function bindEvents() {
   $("#logoutButton").addEventListener("click", logoutFromSupabase);
   $("#migrateButton").addEventListener("click", migrateLocalToSupabase);
   $("#reloadSupabaseButton").addEventListener("click", reloadFromSupabase);
+  $("#restoreInitialTypesButton").addEventListener("click", restoreInitialTaskTypes);
 
   $$(".due-picker button").forEach((button) => {
     button.addEventListener("click", () => chooseDueType(button.dataset.due));
@@ -235,6 +236,14 @@ function displayTitle(task) {
 
 function renderTypePicker() {
   const types = sortedTypes(false);
+  if (!types.length) {
+    els.typePicker.innerHTML = `
+      <div class="empty-state type-picker-warning">
+        タスク種別が登録されていません。設定画面から初期タスク種別を復元してください。
+      </div>
+    `;
+    return;
+  }
   els.typePicker.innerHTML = types
     .map((type) => `
       <button type="button" data-type-id="${type.id}" class="${type.id === selectedTypeId ? "is-selected" : ""}">
@@ -674,13 +683,25 @@ async function migrateLocalToSupabase() {
     return;
   }
   try {
-    await syncManager.migrateLocalToSupabase(state);
+    state = await syncManager.migrateLocalToSupabase(state);
     render();
-    alert("Supabaseへ移行しました。");
+    alert("Supabaseへ移行し、再読み込みしました。");
   } catch (error) {
     alert(error.message);
     renderSyncStatus();
   }
+}
+
+async function restoreInitialTaskTypes() {
+  if (!confirm("初期タスク種別を復元します。同名の種別は重複作成せず、不足分だけ追加します。非表示の初期種別は表示に戻しますか。")) {
+    return;
+  }
+  const result = storage.restoreInitialTaskTypes(state, { reactivate: true });
+  state = result.state;
+  await saveState();
+  render();
+  setView("types");
+  alert(`初期タスク種別を確認しました。追加：${result.added}件、表示に戻した種別：${result.reactivated}件`);
 }
 
 async function reloadFromSupabase() {

@@ -93,6 +93,10 @@ Supabase設定がない場合、アプリはこれまで通りlocalStorage版と
 
 `Supabaseから再読み込み` は、Supabaseの `tasks` / `task_types` を読み込み、localStorageキャッシュも更新します。
 
+Supabaseログイン時に `task_types` が0件だった場合は、localStorage側の `taskTypes` を優先してSupabaseへ自動投入します。localStorage側にも種別がない場合は、初期タスク種別19件を投入します。
+
+設定画面の `初期タスク種別を復元` は、同名の種別を重複作成せず、不足している初期種別だけを追加します。非表示になっている初期種別は表示に戻します。
+
 リアルタイム同期はまだ実装していません。将来追加する場合は `assets/js/sync.js` にRealtime購読を足す想定です。
 
 ## データ構造

@@ -34,21 +34,36 @@ function createInitialState() {
       last_loaded_at: null,
       last_synced_at: null
     },
-    taskTypes: INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply], index) => ({
-      id: cryptoId("type"),
-      user_id: null,
-      name,
-      sort_order: index + 1,
-      active: true,
-      chart_number_mode: chartMode,
-      default_due_type: isSupply ? "tomorrow" : "today",
-      is_supply_related: isSupply,
-      category_tags: isSupply ? [ORDER_TAG] : [],
-      created_at: now,
-      updated_at: now
-    })),
+    taskTypes: createDefaultTaskTypes(now),
     tasks: []
   };
+}
+
+function createDefaultTaskTypes(now = new Date().toISOString()) {
+  return INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply], index) => ({
+    id: cryptoId("type"),
+    user_id: null,
+    name,
+    sort_order: index + 1,
+    active: true,
+    chart_number_mode: chartMode,
+    default_due_type: isSupply ? "tomorrow" : "today",
+    is_supply_related: isSupply,
+    category_tags: isSupply ? [ORDER_TAG] : [],
+    created_at: now,
+    updated_at: now
+  }));
+}
+
+function hasStoredTaskTypes() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.taskTypes) && parsed.taskTypes.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function loadLocalState() {
@@ -118,6 +133,45 @@ function normalizeState(data, fallback = createInitialState()) {
   };
 }
 
+function restoreInitialTaskTypes(state, options = {}) {
+  const now = new Date().toISOString();
+  const normalized = normalizeState(state, createInitialState());
+  const existingByName = new Map(normalized.taskTypes.map((type) => [type.name, type]));
+  const maxSort = Math.max(0, ...normalized.taskTypes.map((type) => Number(type.sort_order) || 0));
+  let added = 0;
+  let reactivated = 0;
+
+  createDefaultTaskTypes(now).forEach((defaultType, index) => {
+    const existing = existingByName.get(defaultType.name);
+    if (existing) {
+      if (options.reactivate !== false && existing.active === false) {
+        existing.active = true;
+        existing.updated_at = now;
+        reactivated += 1;
+      }
+      if (!existing.chart_number_mode) existing.chart_number_mode = defaultType.chart_number_mode;
+      if (!existing.default_due_type) existing.default_due_type = defaultType.default_due_type;
+      if (existing.is_supply_related === undefined) existing.is_supply_related = defaultType.is_supply_related;
+      if (!Array.isArray(existing.category_tags)) {
+        existing.category_tags = existing.is_supply_related ? [ORDER_TAG] : [];
+      }
+      return;
+    }
+
+    normalized.taskTypes.push({
+      ...defaultType,
+      sort_order: maxSort + index + 1
+    });
+    added += 1;
+  });
+
+  return {
+    state: normalizeState(normalized, createInitialState()),
+    added,
+    reactivated
+  };
+}
+
 function cryptoId(prefix) {
   if (window.crypto && window.crypto.randomUUID) {
     return `${prefix}_${window.crypto.randomUUID()}`;
@@ -129,8 +183,11 @@ window.ClinicTaskStorage = {
   STORAGE_KEY,
   ORDER_TAG,
   createInitialState,
+  createDefaultTaskTypes,
+  hasStoredTaskTypes,
   loadLocalState,
   saveLocalState,
   normalizeState,
+  restoreInitialTaskTypes,
   cryptoId
 };
