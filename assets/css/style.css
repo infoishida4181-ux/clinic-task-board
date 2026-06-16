@@ -256,6 +256,18 @@ h3 {
   color: var(--primary-dark);
 }
 
+.sync-notice.is-failed {
+  border-color: #ffb4aa;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.sync-test-result {
+  margin: 10px 0 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
 .task-card,
 .type-card,
 .settings-block {

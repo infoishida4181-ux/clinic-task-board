@@ -128,9 +128,26 @@ function normalizeState(data, fallback = createInitialState()) {
       archived: Boolean(task.archived),
       created_at: task.created_at || now,
       updated_at: task.updated_at || task.created_at || now,
-      completed_at: task.completed_at || null
+      completed_at: task.completed_at || null,
+      synced: Boolean(task.synced),
+      pendingSync: Boolean(task.pendingSync),
+      sync_error: task.sync_error || ""
     }))
   };
+}
+
+function mergeRemoteState(localState, remoteState) {
+  const normalizedLocal = normalizeState(localState, createInitialState());
+  const normalizedRemote = normalizeState(remoteState, createInitialState());
+  const remoteTaskIds = new Set(normalizedRemote.tasks.map((task) => task.id));
+  const localPendingTasks = normalizedLocal.tasks.filter((task) =>
+    (task.pendingSync || task.sync_error) && !remoteTaskIds.has(task.id)
+  );
+
+  return normalizeState({
+    ...normalizedRemote,
+    tasks: [...localPendingTasks, ...normalizedRemote.tasks]
+  }, createInitialState());
 }
 
 function restoreInitialTaskTypes(state, options = {}) {
@@ -188,6 +205,7 @@ window.ClinicTaskStorage = {
   loadLocalState,
   saveLocalState,
   normalizeState,
+  mergeRemoteState,
   restoreInitialTaskTypes,
   cryptoId
 };

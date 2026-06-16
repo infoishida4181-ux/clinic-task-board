@@ -36,11 +36,12 @@
         }
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Supabase request failed: ${response.status}`);
+        const error = await buildSupabaseError(response, path);
+        throw error;
       }
       if (response.status === 204) return null;
-      return response.json();
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
     }
 
     async function signIn(email, password) {
@@ -73,7 +74,26 @@
     async function upsertAll(state) {
       requireLogin();
       const userId = session.user.id;
-      const taskTypes = state.taskTypes.map((type) => ({
+      const taskTypes = buildTaskTypePayloads(state, userId);
+      const tasks = buildTaskPayloads(state, userId);
+
+      if (taskTypes.length) {
+        await upsertTaskTypes(taskTypes);
+      }
+      if (tasks.length) {
+        await upsertTasks(tasks);
+      }
+
+      return {
+        userId,
+        taskTypesCount: taskTypes.length,
+        tasksCount: tasks.length,
+        taskPayloadSample: tasks[0] || null
+      };
+    }
+
+    function buildTaskTypePayloads(state, userId) {
+      return state.taskTypes.map((type) => ({
         id: type.id,
         user_id: userId,
         name: type.name,
@@ -85,7 +105,10 @@
         created_at: type.created_at,
         updated_at: type.updated_at
       }));
-      const tasks = state.tasks.map((task) => ({
+    }
+
+    function buildTaskPayloads(state, userId) {
+      return state.tasks.map((task) => ({
         id: task.id,
         user_id: userId,
         task_type_id: task.task_type_id || null,
@@ -100,21 +123,65 @@
         updated_at: task.updated_at,
         completed_at: task.completed_at
       }));
+    }
 
-      if (taskTypes.length) {
-        await request("/rest/v1/task_types?on_conflict=id", {
-          method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify(taskTypes)
-        });
-      }
-      if (tasks.length) {
-        await request("/rest/v1/tasks?on_conflict=id", {
-          method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify(tasks)
-        });
-      }
+    async function upsertTaskTypes(taskTypes) {
+      return request("/rest/v1/task_types?on_conflict=id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(taskTypes)
+      });
+    }
+
+    async function upsertTasks(tasks) {
+      return request("/rest/v1/tasks?on_conflict=id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(tasks)
+      });
+    }
+
+    async function deleteTask(taskId) {
+      requireLogin();
+      return request(`/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`, {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal" }
+      });
+    }
+
+    async function runConnectionTest() {
+      requireLogin();
+      const userId = session.user.id;
+      const now = new Date().toISOString();
+      const testTask = {
+        id: `task_connection_test_${Date.now()}`,
+        user_id: userId,
+        task_type_id: null,
+        title: "Supabase接続テスト",
+        chart_number: null,
+        memo: "自動削除されるテストデータ",
+        due_date: null,
+        priority: "normal",
+        status: "active",
+        archived: false,
+        created_at: now,
+        updated_at: now,
+        completed_at: null
+      };
+
+      await request("/rest/v1/task_types?select=id&limit=1");
+      await request("/rest/v1/tasks?select=id&limit=1");
+      await upsertTasks([testTask]);
+      await deleteTask(testTask.id);
+
+      return {
+        userId,
+        email: session.user.email,
+        taskTypesSelect: true,
+        tasksSelect: true,
+        tasksInsert: true,
+        tasksDelete: true
+      };
     }
 
     function getSession() {
@@ -132,8 +199,28 @@
       signIn,
       signOut,
       loadAll,
-      upsertAll
+      upsertAll,
+      runConnectionTest
     };
+  }
+
+  async function buildSupabaseError(response, path) {
+    const text = await response.text();
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    const message = parsed && parsed.message ? parsed.message : text || `Supabase request failed: ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.path = path;
+    error.details = parsed && parsed.details ? parsed.details : "";
+    error.hint = parsed && parsed.hint ? parsed.hint : "";
+    error.code = parsed && parsed.code ? parsed.code : "";
+    error.body = parsed || text;
+    return error;
   }
 
   function readSession() {

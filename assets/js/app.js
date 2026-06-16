@@ -70,6 +70,7 @@ function bindEvents() {
   $("#logoutButton").addEventListener("click", logoutFromSupabase);
   $("#migrateButton").addEventListener("click", migrateLocalToSupabase);
   $("#reloadSupabaseButton").addEventListener("click", reloadFromSupabase);
+  $("#connectionTestButton").addEventListener("click", runSupabaseConnectionTest);
   $("#restoreInitialTypesButton").addEventListener("click", restoreInitialTaskTypes);
 
   $$(".due-picker button").forEach((button) => {
@@ -95,8 +96,12 @@ async function tryInitialCloudLoad() {
 
 async function saveState() {
   state = storage.normalizeState(state);
-  await syncManager.save(state);
+  const result = await syncManager.save(state);
+  if (result && result.state) {
+    state = result.state;
+  }
   renderSyncStatus();
+  return result;
 }
 
 function render() {
@@ -114,24 +119,33 @@ function renderSyncStatus() {
     local: "保存：この端末のみ",
     not_logged_in: "未ログイン",
     supabase: "保存：Supabase同期中",
-    offline: "保存：オフライン一時保存"
+    offline: "保存：オフライン一時保存",
+    failed: "Supabase保存失敗・端末内一時保存"
   };
   const label = labelMap[status.status] || "保存：この端末のみ";
+  const pendingCount = countPendingTasks();
   els.saveModeBadge.textContent = label;
   els.loginStatusText.textContent = status.loggedIn ? `ログイン中：${status.email}` : status.configured ? "未ログイン" : "Supabase未設定";
   els.syncNotice.classList.toggle("is-supabase", status.status === "supabase");
   els.syncNotice.classList.toggle("is-offline", status.status === "offline");
+  els.syncNotice.classList.toggle("is-failed", status.status === "failed");
   els.syncNotice.innerHTML = `
     <strong>${escapeHtml(label)}</strong>
-    <span>${escapeHtml(syncStatusMessage(status))}</span>
+    <span>${escapeHtml(syncStatusMessage(status, pendingCount))}</span>
   `;
 }
 
-function syncStatusMessage(status) {
-  if (status.status === "supabase") return "ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。";
+function syncStatusMessage(status, pendingCount) {
+  const pendingText = pendingCount ? ` 未同期タスク：${pendingCount}件。` : "";
+  if (status.status === "supabase") return `ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。${pendingText}`;
+  if (status.status === "failed") return `Supabase保存に失敗しました。タスクは端末内に残しています。${pendingText}${status.lastError || ""}`;
   if (status.status === "offline") return `Supabase接続に失敗しました。localStorage版として継続します。${status.lastError || ""}`;
   if (status.status === "not_logged_in") return "Supabase設定はあります。ログインすると同期を使えます。";
   return "Supabase設定がないため、これまで通りlocalStorageだけで動作します。";
+}
+
+function countPendingTasks() {
+  return state.tasks.filter((task) => task.pendingSync || task.sync_error).length;
 }
 
 function setView(view) {
@@ -423,7 +437,10 @@ async function saveTaskFromForm(event) {
     priority: "normal",
     status: "active",
     archived: false,
-    updated_at: now
+    updated_at: now,
+    synced: false,
+    pendingSync: Boolean(syncManager.getStatus().loggedIn),
+    sync_error: ""
   };
 
   if (id) {
@@ -439,10 +456,11 @@ async function saveTaskFromForm(event) {
       completed_at: null
     });
   }
-  await saveState();
+  const saveResult = await saveState();
   closeTaskModal();
   render();
   setView(activeView);
+  notifySaveFailure(saveResult);
 }
 
 async function handleTaskAction(action, taskId) {
@@ -454,11 +472,13 @@ async function handleTaskAction(action, taskId) {
     task.status = "completed";
     task.completed_at = now;
     task.updated_at = now;
+    markTaskPending(task);
   }
   if (action === "reactivate") {
     task.status = "active";
     task.completed_at = null;
     task.updated_at = now;
+    markTaskPending(task);
   }
   if (action === "edit") {
     openTaskModal(task);
@@ -467,23 +487,34 @@ async function handleTaskAction(action, taskId) {
   if (action === "tomorrow") {
     task.due_date = resolveDueDate("tomorrow");
     task.updated_at = now;
+    markTaskPending(task);
   }
   if (action === "next_week") {
     task.due_date = resolveDueDate("next_week");
     task.updated_at = now;
+    markTaskPending(task);
   }
   if (action === "no_due") {
     task.due_date = null;
     task.updated_at = now;
+    markTaskPending(task);
   }
   if (action === "delete") {
     if (!confirm("このタスクを削除しますか。完了履歴として残したい場合は削除ではなく完了にしてください。")) return;
     state.tasks = state.tasks.filter((item) => item.id !== taskId);
   }
 
-  await saveState();
+  const saveResult = await saveState();
   render();
   setView(activeView);
+  notifySaveFailure(saveResult);
+}
+
+function markTaskPending(task) {
+  if (!syncManager.getStatus().loggedIn) return;
+  task.synced = false;
+  task.pendingSync = true;
+  task.sync_error = "";
 }
 
 function openTypeModal(type = null) {
@@ -710,6 +741,39 @@ async function reloadFromSupabase() {
   }
   state = await syncManager.loadFromSupabase(state);
   render();
+}
+
+async function runSupabaseConnectionTest() {
+  const resultBox = $("#connectionTestResult");
+  resultBox.textContent = "Supabase接続テスト中...";
+  const result = await syncManager.runConnectionTest();
+  renderSyncStatus();
+  if (result.ok) {
+    resultBox.textContent = [
+      "接続テストOK",
+      `ログインユーザーID：${result.result.userId}`,
+      `メール：${result.result.email || ""}`,
+      "task_types select OK",
+      "tasks select OK",
+      "tasks test insert OK",
+      "tasks test delete OK"
+    ].join("\n");
+    return;
+  }
+  resultBox.textContent = [
+    "接続テスト失敗",
+    `HTTP status：${result.error && result.error.status ? result.error.status : ""}`,
+    `message：${result.error && result.error.message ? result.error.message : ""}`,
+    `details：${result.error && result.error.details ? result.error.details : ""}`,
+    `hint：${result.error && result.error.hint ? result.error.hint : ""}`,
+    `path：${result.error && result.error.path ? result.error.path : ""}`
+  ].join("\n");
+}
+
+function notifySaveFailure(saveResult) {
+  if (!saveResult || saveResult.ok !== false || !syncManager.getStatus().loggedIn) return;
+  if (saveResult.reason === "local" || saveResult.reason === "not_logged_in") return;
+  alert(`Supabase保存失敗。タスクはこの端末に未同期として残しました。\n${syncManager.getStatus().lastError || ""}`);
 }
 
 function isTodayWork(task) {

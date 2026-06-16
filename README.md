@@ -97,6 +97,10 @@ Supabaseログイン時に `task_types` が0件だった場合は、localStorage
 
 設定画面の `初期タスク種別を復元` は、同名の種別を重複作成せず、不足している初期種別だけを追加します。非表示になっている初期種別は表示に戻します。
 
+タスク追加・編集時は、まずlocalStorageに保存します。Supabase保存に成功した場合は同期済み、失敗した場合は `pendingSync=true` として端末内に残し、保存モードに `Supabase保存失敗・端末内一時保存` と未同期件数を表示します。Supabaseから再読み込みしても、未同期タスクは消さずにlocalStorage側へ残します。
+
+設定画面の `Supabase接続テスト` では、ログインユーザーID、`task_types` select、`tasks` select、`tasks` test insert、`tasks` test delete を確認します。失敗時はHTTP status、message、details、hint、pathを表示します。
+
 リアルタイム同期はまだ実装していません。将来追加する場合は `assets/js/sync.js` にRealtime購読を足す想定です。
 
 ## データ構造

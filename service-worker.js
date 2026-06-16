@@ -1,4 +1,4 @@
-const CACHE_NAME = "clinic-task-board-v3";
+const CACHE_NAME = "clinic-task-board-v4";
 const APP_ASSETS = [
   "./",
   "./index.html",
