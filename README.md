@@ -144,9 +144,11 @@ JSONエクスポート・インポートを用意しています。
 
 インポート時は既存データを上書きします。復元前には現在のJSONを書き出してください。
 
-## PWA
+## PWA / Service Worker
 
-`manifest.json` と `service-worker.js` を用意しています。ローカルHTTPサーバー、またはHTTPS環境で開くとService Workerが登録され、最低限のオフライン表示に対応します。
+`manifest.json` と `service-worker.js` は残していますが、Supabase同期確認中はService Worker登録を無効化しています。アプリ起動時に既存のService Worker登録を解除し、Cache Storageの既存cacheも削除します。
+
+`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-sync-debug` を確認してください。
 
 ## 主なファイル
 

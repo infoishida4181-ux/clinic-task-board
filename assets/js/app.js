@@ -1,4 +1,5 @@
 const storage = window.ClinicTaskStorage;
+const APP_VERSION = "2026-06-17-sync-debug";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
@@ -43,9 +44,10 @@ document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
   bindEvents();
+  renderAppVersion();
   await tryInitialCloudLoad();
   render();
-  registerServiceWorker();
+  disableServiceWorkerAndCaches();
 }
 
 function bindEvents() {
@@ -86,6 +88,13 @@ function bindEvents() {
   els.typeModal.addEventListener("click", (event) => {
     if (event.target === els.typeModal) closeTypeModal();
   });
+}
+
+function renderAppVersion() {
+  const versionText = $("#appVersionText");
+  if (versionText) {
+    versionText.textContent = `Version: ${APP_VERSION}`;
+  }
 }
 
 async function tryInitialCloudLoad() {
@@ -896,11 +905,18 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function registerServiceWorker() {
-  if (!("serviceWorker" in navigator)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch((error) => {
-      console.warn("Service Worker registration failed", error);
-    });
-  });
+async function disableServiceWorkerAndCaches() {
+  // During Supabase sync debugging, avoid stale GitHub Pages/PWA assets.
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn("Service Worker/cache cleanup failed", error);
+  }
 }
