@@ -60,7 +60,7 @@ clinicTaskBoard.v1
 `assets/js/config.example.js` を `assets/js/config.js` にコピーし、実際の値を入れてください。
 
 ```js
-const SUPABASE_CONFIG = {
+window.SUPABASE_CONFIG = {
   url: "YOUR_SUPABASE_URL",
   anonKey: "YOUR_SUPABASE_ANON_KEY"
 };
