@@ -1,0 +1,19 @@
+{
+  "name": "院内タスクボード",
+  "short_name": "院内タスク",
+  "description": "歯科医院のチェアサイド入力に特化したシンプルなタスク管理アプリ",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f7f6",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

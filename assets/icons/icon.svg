@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="院内タスクボード">
+  <rect width="512" height="512" rx="96" fill="#0f766e"/>
+  <rect x="118" y="112" width="276" height="314" rx="34" fill="#ffffff"/>
+  <path d="M178 174h156" stroke="#0f766e" stroke-width="30" stroke-linecap="round"/>
+  <path d="M178 246h156" stroke="#315fa8" stroke-width="30" stroke-linecap="round"/>
+  <path d="M178 318h108" stroke="#5f4b8b" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="150" cy="174" r="15" fill="#0f766e"/>
+  <circle cx="150" cy="246" r="15" fill="#315fa8"/>
+  <circle cx="150" cy="318" r="15" fill="#5f4b8b"/>
+</svg>
