@@ -2,33 +2,33 @@ const STORAGE_KEY = "clinicTaskBoard.v1";
 const ORDER_TAG = "order_prepare";
 
 // Fixed clinic policy: tasks may store chart numbers, but never patient names or patient master data.
-// The last two flags are view placement, kept separate from chart_number_mode.
+// The last three flags are independent view placement, kept separate from chart_number_mode.
 const INITIAL_TASK_TYPE_ROWS = [
-  ["インプラント体発注", "required", true, false],
-  ["ガイド発注", "required", true, false],
-  ["2次オペ準備物確認", "required", true, false],
-  ["インプラント印象準備物確認", "required", true, false],
-  ["個人トレー作製", "required", true, false],
-  ["TEC作製", "required", true, false],
-  ["NG作製", "required", true, false],
-  ["プレオルソ発注", "required", true, false],
-  ["紹介状作製", "required", false, true],
-  ["シェード写真送信", "required", false, true],
-  ["メンブレン発注", "optional", true, false],
-  ["エムドゲイン発注", "optional", true, false],
-  ["リグロス発注", "optional", true, false],
-  ["AOSS発注", "optional", true, false],
-  ["ボナーク発注", "optional", true, false],
-  ["テルプラグ発注", "optional", true, false],
-  ["振り込み・支払い", "none", false, false],
-  ["事務仕事", "none", false, false],
-  ["その他", "optional", false, false]
+  ["インプラント体発注", "required", true, false, false],
+  ["ガイド発注", "required", true, false, false],
+  ["2次オペ準備物確認", "required", true, false, false],
+  ["インプラント印象準備物確認", "required", true, false, false],
+  ["個人トレー作製", "required", true, false, false],
+  ["TEC作製", "required", true, false, false],
+  ["NG作製", "required", true, false, false],
+  ["プレオルソ発注", "required", true, false, false],
+  ["紹介状作製", "required", false, true, false],
+  ["シェード写真送信", "required", false, true, false],
+  ["メンブレン発注", "optional", true, false, false],
+  ["エムドゲイン発注", "optional", true, false, false],
+  ["リグロス発注", "optional", true, false, false],
+  ["AOSS発注", "optional", true, false, false],
+  ["ボナーク発注", "optional", true, false, false],
+  ["テルプラグ発注", "optional", true, false, false],
+  ["振り込み・支払い", "none", false, false, true],
+  ["事務仕事", "none", false, false, true],
+  ["その他", "optional", false, false, true]
 ];
 
 const DEFAULT_TASK_TYPE_BY_NAME = new Map(
-  INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply, isPatient]) => [
+  INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply, isPatient, isAdmin]) => [
     canonicalTypeName(name),
-    { name, chartMode, isSupply, isPatient }
+    { name, chartMode, isSupply, isPatient, isAdmin }
   ])
 );
 
@@ -48,7 +48,7 @@ function createInitialState() {
 }
 
 function createDefaultTaskTypes(now = new Date().toISOString()) {
-  return INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply, isPatient], index) => ({
+  return INITIAL_TASK_TYPE_ROWS.map(([name, chartMode, isSupply, isPatient, isAdmin], index) => ({
     id: cryptoId("type"),
     user_id: null,
     name,
@@ -58,6 +58,7 @@ function createDefaultTaskTypes(now = new Date().toISOString()) {
     default_due_type: isSupply ? "tomorrow" : "today",
     is_supply_related: isSupply,
     is_patient_view: isPatient,
+    is_admin_related: isAdmin,
     category_tags: isSupply ? [ORDER_TAG] : [],
     created_at: now,
     updated_at: now
@@ -120,6 +121,7 @@ function normalizeTaskType(type, index, now) {
     ? defaultSpec.isSupply
     : Boolean(type.is_supply_related || (Array.isArray(type.category_tags) && type.category_tags.includes(ORDER_TAG)));
   const isPatient = defaultSpec ? defaultSpec.isPatient : Boolean(type.is_patient_view);
+  const isAdmin = defaultSpec ? defaultSpec.isAdmin : Boolean(type.is_admin_related);
 
   return {
     id: type.id || cryptoId("type"),
@@ -135,6 +137,7 @@ function normalizeTaskType(type, index, now) {
       : isSupply ? "tomorrow" : "today",
     is_supply_related: isSupply,
     is_patient_view: isPatient,
+    is_admin_related: isAdmin,
     category_tags: isSupply ? [ORDER_TAG] : [],
     created_at: type.created_at || now,
     updated_at: type.updated_at || now
@@ -260,6 +263,7 @@ function restoreInitialTaskTypes(state, options = {}) {
       existing.default_due_type = existing.default_due_type || defaultType.default_due_type;
       existing.is_supply_related = defaultType.is_supply_related;
       existing.is_patient_view = defaultType.is_patient_view;
+      existing.is_admin_related = defaultType.is_admin_related;
       existing.category_tags = existing.is_supply_related ? [ORDER_TAG] : [];
       return;
     }

@@ -36,6 +36,10 @@
           <span class="summary-count" id="countToday">0</span>
           <span class="summary-label">今日の未完了</span>
         </button>
+        <button class="summary-tile all" type="button" data-view-target="all">
+          <span class="summary-count" id="countAll">0</span>
+          <span class="summary-label">全未完了</span>
+        </button>
         <button class="summary-tile danger" type="button" data-view-target="soon">
           <span class="summary-count" id="countOverdue">0</span>
           <span class="summary-label">期限切れ</span>
@@ -48,6 +52,10 @@
           <span class="summary-count" id="countPatient">0</span>
           <span class="summary-label">患者関連</span>
         </button>
+        <button class="summary-tile admin" type="button" data-view-target="admin">
+          <span class="summary-count" id="countAdmin">0</span>
+          <span class="summary-label">事務系</span>
+        </button>
         <button class="summary-tile later" type="button" data-view-target="later">
           <span class="summary-count" id="countLater">0</span>
           <span class="summary-label">後で整理</span>
@@ -56,9 +64,11 @@
 
       <nav class="view-tabs" aria-label="表示切替">
         <button class="tab-button is-active" type="button" data-view="today">今日やる</button>
+        <button class="tab-button" type="button" data-view="all">全未完了</button>
         <button class="tab-button" type="button" data-view="soon">期限が近い</button>
-        <button class="tab-button" type="button" data-view="patient">患者関連</button>
         <button class="tab-button" type="button" data-view="order">発注・準備</button>
+        <button class="tab-button" type="button" data-view="patient">患者関連</button>
+        <button class="tab-button" type="button" data-view="admin">事務系</button>
         <button class="tab-button" type="button" data-view="later">後で整理</button>
         <button class="tab-button" type="button" data-view="completed">完了済み</button>
         <button class="tab-button" type="button" data-view="types">タスク種別</button>
@@ -74,6 +84,14 @@
           <div class="task-list" id="todayList"></div>
         </section>
 
+        <section class="view-panel" id="view-all" aria-labelledby="heading-all">
+          <div class="section-head">
+            <h2 id="heading-all">全未完了</h2>
+            <p>完了・削除・アーカイブ済みを除く残タスクを重複なしで表示</p>
+          </div>
+          <div class="task-list" id="allList"></div>
+        </section>
+
         <section class="view-panel" id="view-soon" aria-labelledby="heading-soon">
           <div class="section-head">
             <h2 id="heading-soon">期限が近い</h2>
@@ -85,7 +103,7 @@
         <section class="view-panel" id="view-patient" aria-labelledby="heading-patient">
           <div class="section-head">
             <h2 id="heading-patient">患者関連</h2>
-            <p>カルテ番号が紐づくタスク</p>
+            <p>患者関連ビューに表示するタスク種別の未完了タスク</p>
           </div>
           <div class="task-list" id="patientList"></div>
         </section>
@@ -96,6 +114,14 @@
             <p>発注・準備タグのあるタスク</p>
           </div>
           <div class="task-list" id="orderList"></div>
+        </section>
+
+        <section class="view-panel" id="view-admin" aria-labelledby="heading-admin">
+          <div class="section-head">
+            <h2 id="heading-admin">事務系</h2>
+            <p>事務系一覧に表示するタスク種別の未完了タスク</p>
+          </div>
+          <div class="task-list" id="adminList"></div>
         </section>
 
         <section class="view-panel" id="view-later" aria-labelledby="heading-later">
@@ -187,7 +213,7 @@
             </div>
             <div class="settings-block">
               <h3>バージョン</h3>
-              <p id="appVersionText">Version: 2026-06-17-delete-tombstone</p>
+              <p id="appVersionText">Version: 2026-06-17-admin-all-tabs</p>
               <p>Supabase同期確認中はService Workerを無効化しています。</p>
             </div>
           </div>
@@ -290,6 +316,10 @@
           <label class="checkbox-row">
             <input id="typePatientView" type="checkbox">
             <span>患者関連ビューに表示</span>
+          </label>
+          <label class="checkbox-row">
+            <input id="typeAdminRelated" type="checkbox">
+            <span>事務系一覧に表示</span>
           </label>
           <label class="checkbox-row">
             <input id="typeActive" type="checkbox">

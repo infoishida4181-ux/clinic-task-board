@@ -8,6 +8,7 @@ create table if not exists public.task_types (
   default_due_type text not null default 'today',
   is_supply_related boolean not null default false,
   is_patient_view boolean not null default false,
+  is_admin_related boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

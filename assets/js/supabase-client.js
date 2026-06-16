@@ -103,6 +103,7 @@
         default_due_type: type.default_due_type,
         is_supply_related: Boolean(type.is_supply_related),
         is_patient_view: Boolean(type.is_patient_view),
+        is_admin_related: Boolean(type.is_admin_related),
         created_at: type.created_at,
         updated_at: type.updated_at
       }));

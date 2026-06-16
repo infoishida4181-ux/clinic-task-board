@@ -1,5 +1,5 @@
 const storage = window.ClinicTaskStorage;
-const APP_VERSION = "2026-06-17-delete-tombstone";
+const APP_VERSION = "2026-06-17-admin-all-tabs";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
@@ -17,16 +17,20 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const els = {
   counts: {
     today: $("#countToday"),
+    all: $("#countAll"),
     overdue: $("#countOverdue"),
     order: $("#countOrder"),
     patient: $("#countPatient"),
+    admin: $("#countAdmin"),
     later: $("#countLater")
   },
   lists: {
     today: $("#todayList"),
+    all: $("#allList"),
     soon: $("#soonList"),
     patient: $("#patientList"),
     order: $("#orderList"),
+    admin: $("#adminList"),
     later: $("#laterList"),
     completed: $("#completedList")
   },
@@ -175,6 +179,7 @@ function setView(view) {
 }
 
 function activeTasks() {
+  // Every active list starts here so completed, archived, and deleted tombstone tasks stay out of tabs and counts.
   return state.tasks.filter((task) => task.status === "active" && !task.archived && !isDeletedTask(task));
 }
 
@@ -196,24 +201,29 @@ function sortedTypes(includeInactive = false) {
 function renderCounts() {
   const tasks = activeTasks();
   els.counts.today.textContent = tasks.filter(isTodayWork).length;
+  els.counts.all.textContent = tasks.length;
   els.counts.overdue.textContent = tasks.filter(isOverdue).length;
   els.counts.order.textContent = tasks.filter(isOrderTask).length;
   els.counts.patient.textContent = tasks.filter(isPatientViewTask).length;
+  els.counts.admin.textContent = tasks.filter(isAdminTask).length;
   els.counts.later.textContent = tasks.filter(isLaterTask).length;
 }
 
 function renderTaskLists() {
   const tasks = activeTasks();
   renderTaskList(els.lists.today, tasks.filter(isTodayWork));
+  // 全未完了 is a unique task list from the task source itself, not a sum of category tabs.
+  renderTaskList(els.lists.all, tasks, false, compareAllIncompleteTasks);
   renderTaskList(els.lists.soon, tasks.filter(isDueSoon));
   renderTaskList(els.lists.patient, tasks.filter(isPatientViewTask));
   renderTaskList(els.lists.order, tasks.filter(isOrderTask));
+  renderTaskList(els.lists.admin, tasks.filter(isAdminTask));
   renderTaskList(els.lists.later, tasks.filter(isLaterTask));
   renderTaskList(els.lists.completed, completedTasks(), true);
 }
 
-function renderTaskList(container, tasks, completed = false) {
-  const sorted = tasks.slice().sort(compareTasks);
+function renderTaskList(container, tasks, completed = false, comparator = compareTasks) {
+  const sorted = tasks.slice().sort(comparator);
   if (!sorted.length) {
     container.innerHTML = `<div class="empty-state">表示するタスクはありません。</div>`;
     return;
@@ -297,6 +307,7 @@ function renderTypeList() {
     const chartLabel = { required: "カルテ必須", optional: "カルテ任意", none: "カルテ不要" }[type.chart_number_mode];
     const orderLabel = isSupplyType(type) ? "発注・準備" : "通常";
     const patientLabel = isPatientViewType(type) ? "患者関連" : "";
+    const adminLabel = isAdminType(type) ? "事務系" : "";
     return `
       <article class="type-card ${type.active ? "" : "is-inactive"}">
         <div class="type-card-head">
@@ -308,6 +319,7 @@ function renderTypeList() {
           <span class="due-chip">既定：${escapeHtml(dueTypeLabel(type.default_due_type))}</span>
           <span class="due-chip">${orderLabel}</span>
           ${patientLabel ? `<span class="due-chip">${patientLabel}</span>` : ""}
+          ${adminLabel ? `<span class="due-chip">${adminLabel}</span>` : ""}
           ${isUsed ? `<span class="due-chip">履歴あり</span>` : ""}
         </div>
         <div class="type-actions">
@@ -556,6 +568,7 @@ function openTypeModal(type = null) {
   $("#typeDefaultDue").value = "today";
   $("#typeOrderTag").checked = false;
   $("#typePatientView").checked = false;
+  $("#typeAdminRelated").checked = false;
   $("#typeModalTitle").textContent = "タスク種別追加";
 
   if (type) {
@@ -566,6 +579,7 @@ function openTypeModal(type = null) {
     $("#typeDefaultDue").value = type.default_due_type;
     $("#typeOrderTag").checked = isSupplyType(type);
     $("#typePatientView").checked = isPatientViewType(type);
+    $("#typeAdminRelated").checked = isAdminType(type);
     $("#typeActive").checked = type.active;
   }
   els.typeModal.hidden = false;
@@ -582,6 +596,7 @@ async function saveTypeFromForm(event) {
   const now = new Date().toISOString();
   const isSupply = $("#typeOrderTag").checked;
   const isPatient = $("#typePatientView").checked;
+  const isAdmin = $("#typeAdminRelated").checked;
   const payload = {
     name: $("#typeName").value.trim(),
     chart_number_mode: $("#typeChartMode").value,
@@ -589,6 +604,7 @@ async function saveTypeFromForm(event) {
     active: $("#typeActive").checked,
     is_supply_related: isSupply,
     is_patient_view: isPatient,
+    is_admin_related: isAdmin,
     category_tags: isSupply ? [storage.ORDER_TAG] : [],
     updated_at: now
   };
@@ -854,6 +870,15 @@ function isPatientViewType(type) {
   return Boolean(type && type.is_patient_view);
 }
 
+function isAdminType(type) {
+  return Boolean(type && type.is_admin_related);
+}
+
+function isAdminTask(task) {
+  // Administrative grouping is an explicit type flag, independent from chart number and due date.
+  return isAdminType(getTaskType(task.task_type_id));
+}
+
 function isPatientViewTask(task) {
   const type = getTaskType(task.task_type_id);
   // Patient view is an explicit master flag; a required chart number alone does not make it patient-view.
@@ -870,6 +895,30 @@ function compareTasks(a, b) {
   if (a.due_date && !b.due_date) return -1;
   if (a.due_date !== b.due_date) return String(a.due_date || "").localeCompare(String(b.due_date || ""));
   return String(b.created_at).localeCompare(String(a.created_at));
+}
+
+function compareAllIncompleteTasks(a, b) {
+  const rankDiff = incompleteRank(a) - incompleteRank(b);
+  if (rankDiff) return rankDiff;
+  const dueA = a.due_date || "9999-12-31";
+  const dueB = b.due_date || "9999-12-31";
+  if (dueA !== dueB) return dueA.localeCompare(dueB);
+  const priorityDiff = priorityRank(a.priority) - priorityRank(b.priority);
+  if (priorityDiff) return priorityDiff;
+  return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+}
+
+function incompleteRank(task) {
+  if (isOverdue(task)) return 0;
+  if (isToday(task.due_date)) return 1;
+  if (task.due_date === toDateInputValue(addDays(startOfDay(new Date()), 1))) return 2;
+  if (task.due_date && parseLocalDate(task.due_date) <= endOfThisWeek()) return 3;
+  if (task.due_date) return 4;
+  return isLaterTask(task) ? 6 : 5;
+}
+
+function priorityRank(priority) {
+  return { high: 0, normal: 1, low: 2 }[priority] ?? 1;
 }
 
 function resolveDueDate(dueType) {
@@ -892,6 +941,20 @@ function resolveDueDate(dueType) {
     return toDateInputValue(date);
   }
   return null;
+}
+
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function endOfThisWeek() {
+  const date = startOfDay(new Date());
+  const day = date.getDay();
+  const daysUntilSaturday = (6 - day + 7) % 7;
+  date.setDate(date.getDate() + daysUntilSaturday);
+  return date;
 }
 
 function dueTypeLabel(dueType) {
