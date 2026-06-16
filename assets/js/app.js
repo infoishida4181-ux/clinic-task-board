@@ -1,11 +1,12 @@
 const storage = window.ClinicTaskStorage;
-const APP_VERSION = "2026-06-17-sync-debug";
+const APP_VERSION = "2026-06-17-category-dedupe";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
 });
 
 let state = storage.loadLocalState();
+storage.saveLocalState(state);
 let activeView = "today";
 let selectedTypeId = "";
 let selectedDueType = "today";
@@ -187,7 +188,7 @@ function renderCounts() {
   els.counts.today.textContent = tasks.filter(isTodayWork).length;
   els.counts.overdue.textContent = tasks.filter(isOverdue).length;
   els.counts.order.textContent = tasks.filter(isOrderTask).length;
-  els.counts.patient.textContent = tasks.filter((task) => task.chart_number).length;
+  els.counts.patient.textContent = tasks.filter(isPatientViewTask).length;
   els.counts.later.textContent = tasks.filter(isLaterTask).length;
 }
 
@@ -195,7 +196,7 @@ function renderTaskLists() {
   const tasks = activeTasks();
   renderTaskList(els.lists.today, tasks.filter(isTodayWork));
   renderTaskList(els.lists.soon, tasks.filter(isDueSoon));
-  renderTaskList(els.lists.patient, tasks.filter((task) => task.chart_number));
+  renderTaskList(els.lists.patient, tasks.filter(isPatientViewTask));
   renderTaskList(els.lists.order, tasks.filter(isOrderTask));
   renderTaskList(els.lists.later, tasks.filter(isLaterTask));
   renderTaskList(els.lists.completed, completedTasks(), true);
@@ -285,6 +286,7 @@ function renderTypeList() {
     const isUsed = usedTypeIds.has(type.id);
     const chartLabel = { required: "カルテ必須", optional: "カルテ任意", none: "カルテ不要" }[type.chart_number_mode];
     const orderLabel = isSupplyType(type) ? "発注・準備" : "通常";
+    const patientLabel = isPatientViewType(type) ? "患者関連" : "";
     return `
       <article class="type-card ${type.active ? "" : "is-inactive"}">
         <div class="type-card-head">
@@ -295,6 +297,7 @@ function renderTypeList() {
           <span class="type-chip">${chartLabel}</span>
           <span class="due-chip">既定：${escapeHtml(dueTypeLabel(type.default_due_type))}</span>
           <span class="due-chip">${orderLabel}</span>
+          ${patientLabel ? `<span class="due-chip">${patientLabel}</span>` : ""}
           ${isUsed ? `<span class="due-chip">履歴あり</span>` : ""}
         </div>
         <div class="type-actions">
@@ -532,6 +535,7 @@ function openTypeModal(type = null) {
   $("#typeActive").checked = true;
   $("#typeDefaultDue").value = "today";
   $("#typeOrderTag").checked = false;
+  $("#typePatientView").checked = false;
   $("#typeModalTitle").textContent = "タスク種別追加";
 
   if (type) {
@@ -541,6 +545,7 @@ function openTypeModal(type = null) {
     $("#typeChartMode").value = type.chart_number_mode;
     $("#typeDefaultDue").value = type.default_due_type;
     $("#typeOrderTag").checked = isSupplyType(type);
+    $("#typePatientView").checked = isPatientViewType(type);
     $("#typeActive").checked = type.active;
   }
   els.typeModal.hidden = false;
@@ -556,12 +561,14 @@ async function saveTypeFromForm(event) {
   const id = $("#typeId").value;
   const now = new Date().toISOString();
   const isSupply = $("#typeOrderTag").checked;
+  const isPatient = $("#typePatientView").checked;
   const payload = {
     name: $("#typeName").value.trim(),
     chart_number_mode: $("#typeChartMode").value,
     default_due_type: $("#typeDefaultDue").value,
     active: $("#typeActive").checked,
     is_supply_related: isSupply,
+    is_patient_view: isPatient,
     category_tags: isSupply ? [storage.ORDER_TAG] : [],
     updated_at: now
   };
@@ -812,6 +819,16 @@ function isSupplyType(type) {
 
 function isOrderTask(task) {
   return isSupplyType(getTaskType(task.task_type_id));
+}
+
+function isPatientViewType(type) {
+  return Boolean(type && type.is_patient_view);
+}
+
+function isPatientViewTask(task) {
+  const type = getTaskType(task.task_type_id);
+  // Patient view is an explicit master flag; a required chart number alone does not make it patient-view.
+  return isPatientViewType(type) && !isSupplyType(type);
 }
 
 function isLaterTask(task) {

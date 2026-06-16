@@ -51,7 +51,7 @@
               last_synced_at: new Date().toISOString()
             }
           });
-          await client.upsertAll(seededState);
+          await persistStateAndDeleteDuplicates(seededState);
           status = "supabase";
           lastError = "";
           lastErrorDetail = null;
@@ -78,6 +78,7 @@
           }
         });
         const normalized = storage.mergeRemoteState(localState, normalizedRemote);
+        await persistStateAndDeleteDuplicates(normalized);
         status = "supabase";
         lastError = "";
         lastErrorDetail = null;
@@ -99,12 +100,13 @@
         return { ok: false, state, reason: status };
       }
       try {
-        const result = await client.upsertAll(state);
+        const normalizedForSave = storage.normalizeState(state);
+        const result = await persistStateAndDeleteDuplicates(normalizedForSave);
         status = "supabase";
         lastError = "";
         lastErrorDetail = null;
         lastSaveResult = result;
-        const syncedState = storage.normalizeState(state);
+        const syncedState = storage.normalizeState(normalizedForSave);
         syncedState.tasks = syncedState.tasks.map((task) => ({
           ...task,
           user_id: result.userId,
@@ -124,6 +126,7 @@
         lastError = formatSupabaseError(error);
         lastErrorDetail = errorToDetail(error);
         const failedState = storage.normalizeState(state);
+        // Supabase failures must not delete chairside input; keep changed tasks pending locally.
         failedState.tasks = failedState.tasks.map((task) => task.pendingSync || !task.synced ? {
           ...task,
           synced: false,
@@ -140,7 +143,7 @@
       ensureLoggedIn();
       const restored = storage.restoreInitialTaskTypes(state);
       const migrationState = storage.normalizeState(restored.state);
-      await client.upsertAll(migrationState);
+      await persistStateAndDeleteDuplicates(migrationState);
       migrationState.sync = {
         ...(state.sync || {}),
         mode: "supabase",
@@ -168,6 +171,15 @@
         console.error("Supabase connection test failed", lastErrorDetail || error);
         return { ok: false, error: lastErrorDetail };
       }
+    }
+
+    async function persistStateAndDeleteDuplicates(state) {
+      // Save remapped tasks first, then delete duplicate task types so references are never lost.
+      const result = await client.upsertAll(state);
+      if (Array.isArray(state.duplicateTypeIds) && state.duplicateTypeIds.length) {
+        await client.deleteTaskTypes(state.duplicateTypeIds);
+      }
+      return result;
     }
 
     function ensureConfigured() {

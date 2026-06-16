@@ -7,6 +7,7 @@ create table if not exists public.task_types (
   chart_number_mode text not null check (chart_number_mode in ('required', 'optional', 'none')),
   default_due_type text not null default 'today',
   is_supply_related boolean not null default false,
+  is_patient_view boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -104,6 +105,7 @@ using (auth.uid() = user_id);
 
 create index if not exists task_types_user_sort_idx on public.task_types (user_id, sort_order);
 create index if not exists task_types_user_active_idx on public.task_types (user_id, active);
+create unique index if not exists task_types_user_name_unique_idx on public.task_types (user_id, lower(btrim(name)));
 create index if not exists tasks_user_status_due_idx on public.tasks (user_id, status, due_date);
 create index if not exists tasks_user_task_type_idx on public.tasks (user_id, task_type_id);
 create index if not exists tasks_user_chart_number_idx on public.tasks (user_id, chart_number) where chart_number is not null;

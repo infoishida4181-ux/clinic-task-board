@@ -102,6 +102,7 @@
         chart_number_mode: type.chart_number_mode,
         default_due_type: type.default_due_type,
         is_supply_related: Boolean(type.is_supply_related),
+        is_patient_view: Boolean(type.is_patient_view),
         created_at: type.created_at,
         updated_at: type.updated_at
       }));
@@ -144,6 +145,16 @@
     async function deleteTask(taskId) {
       requireLogin();
       return request(`/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`, {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal" }
+      });
+    }
+
+    async function deleteTaskTypes(typeIds) {
+      requireLogin();
+      if (!typeIds.length) return null;
+      const encodedIds = typeIds.map((id) => `"${String(id).replaceAll('"', '\\"')}"`).join(",");
+      return request(`/rest/v1/task_types?id=in.(${encodedIds})`, {
         method: "DELETE",
         headers: { Prefer: "return=minimal" }
       });
@@ -200,6 +211,7 @@
       signOut,
       loadAll,
       upsertAll,
+      deleteTaskTypes,
       runConnectionTest
     };
   }

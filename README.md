@@ -31,7 +31,7 @@
 
 - 今日やる: 今日が期限、または期限切れの未完了タスク
 - 期限が近い: 期限切れ、今日、明日、7日以内のタスク
-- 患者関連: カルテ番号があるタスク
+- 患者関連: `is_patient_view=true` のタスク種別
 - 発注・準備: `is_supply_related=true` のタスク種別
 - 後で整理: 期限なし、その他、種別未選択のタスク
 - 完了済み: 完了したタスク
@@ -115,8 +115,26 @@ Supabaseログイン時に `task_types` が0件だった場合は、localStorage
 - `chart_number_mode`
 - `default_due_type`
 - `is_supply_related`
+- `is_patient_view`
 - `created_at`
 - `updated_at`
+
+`chart_number_mode` はカルテ番号入力の要否だけを表します。患者関連ビューに表示するかどうかは `is_patient_view`、発注・準備ビューに表示するかどうかは `is_supply_related` で別々に管理します。
+
+既存Supabase環境には、次の追加SQLを適用してください。
+
+```sql
+alter table public.task_types
+add column if not exists is_patient_view boolean not null default false;
+
+-- アプリで重複整理が完了し、同一user_id内の同名重複がなくなった後に追加してください。
+create unique index if not exists task_types_user_name_unique_idx
+on public.task_types (user_id, lower(btrim(name)));
+```
+
+初期分類はアプリ起動時の正規化でも補正します。インプラント体発注、ガイド発注、2次オペ準備物確認、インプラント印象準備物確認、個人トレー作製、TEC作製、NG作製、プレオルソ発注、メンブレン発注、エムドゲイン発注、リグロス発注、AOSS発注、ボナーク発注、テルプラグ発注は `is_supply_related=true` です。紹介状作製、シェード写真送信は `is_patient_view=true` です。振り込み・支払い、事務仕事、その他はどちらにも表示しません。
+
+同じ `user_id` 内で同名のタスク種別がある場合、アプリは前後空白を除去した名称で重複整理します。代表種別を1つ残し、既存タスクの `task_type_id` は代表IDへ付け替えます。Supabase同期時は付け替え後のtasksを保存したうえで、重複task_typeを削除します。
 
 ### tasks
 
@@ -148,7 +166,7 @@ JSONエクスポート・インポートを用意しています。
 
 `manifest.json` と `service-worker.js` は残していますが、Supabase同期確認中はService Worker登録を無効化しています。アプリ起動時に既存のService Worker登録を解除し、Cache Storageの既存cacheも削除します。
 
-`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-sync-debug` を確認してください。
+`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-category-dedupe` を確認してください。
 
 ## 主なファイル
 
