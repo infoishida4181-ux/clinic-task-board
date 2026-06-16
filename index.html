@@ -17,10 +17,13 @@
           <p class="eyebrow">Clinic Task Board</p>
           <h1>院内タスクボード</h1>
         </div>
-        <button class="icon-text-button" id="backupButton" type="button" title="JSONバックアップ">
-          <span aria-hidden="true">↓</span>
-          <span>保存</span>
-        </button>
+        <div class="header-actions">
+          <span class="save-mode-badge" id="saveModeBadge">保存：この端末のみ</span>
+          <button class="icon-text-button" id="backupButton" type="button" title="JSONバックアップ">
+            <span aria-hidden="true">↓</span>
+            <span>保存</span>
+          </button>
+        </div>
       </header>
 
       <section class="privacy-notice" aria-label="保存情報の注意">
@@ -125,9 +128,37 @@
         <section class="view-panel" id="view-settings" aria-labelledby="heading-settings">
           <div class="section-head">
             <h2 id="heading-settings">設定</h2>
-            <p>バックアップとデータ復元</p>
+            <p>バックアップ、データ復元、Supabase同期</p>
+          </div>
+          <div class="sync-notice" id="syncNotice">
+            <strong>保存：この端末のみ</strong>
+            <span>Supabase設定がない場合は、これまで通りlocalStorageだけで動作します。</span>
           </div>
           <div class="settings-grid">
+            <div class="settings-block">
+              <h3>Supabaseログイン</h3>
+              <p id="loginStatusText">未ログイン</p>
+              <label>
+                <span>メールアドレス</span>
+                <input id="loginEmail" type="email" autocomplete="username" placeholder="name@example.com">
+              </label>
+              <label>
+                <span>パスワード</span>
+                <input id="loginPassword" type="password" autocomplete="current-password">
+              </label>
+              <div class="task-actions">
+                <button class="primary-button" id="loginButton" type="button">ログイン</button>
+                <button class="ghost-button" id="logoutButton" type="button">ログアウト</button>
+              </div>
+            </div>
+            <div class="settings-block">
+              <h3>Supabase同期</h3>
+              <p>カルテ番号をクラウドに保存します。AuthとRLSを有効にした環境だけで使ってください。</p>
+              <div class="task-actions">
+                <button class="primary-button" id="migrateButton" type="button">localStorageデータをSupabaseへ移行</button>
+                <button class="ghost-button" id="reloadSupabaseButton" type="button">Supabaseから再読み込み</button>
+              </div>
+            </div>
             <div class="settings-block">
               <h3>JSONエクスポート</h3>
               <p>このデータにはカルテ番号が含まれます。外部共有や送信に注意してください。</p>
@@ -254,6 +285,10 @@
       </section>
     </div>
 
+    <script src="assets/js/config.js" defer></script>
+    <script src="assets/js/storage.js" defer></script>
+    <script src="assets/js/supabase-client.js" defer></script>
+    <script src="assets/js/sync.js" defer></script>
     <script src="assets/js/app.js" defer></script>
   </body>
 </html>

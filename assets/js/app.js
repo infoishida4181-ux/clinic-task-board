@@ -1,30 +1,10 @@
-const STORAGE_KEY = "clinicTaskBoard.v1";
-const ORDER_TAG = "order_prepare";
+const storage = window.ClinicTaskStorage;
+const syncManager = window.ClinicTaskSync.createSyncManager({
+  storage,
+  supabase: window.ClinicTaskSupabase
+});
 
-// Fixed clinic policy: tasks may store chart numbers, but never patient names or patient master data.
-const initialTaskTypeNames = [
-  ["インプラント体発注", "required", true],
-  ["ガイド発注", "required", true],
-  ["2次オペ準備物確認", "required", true],
-  ["インプラント印象準備物確認", "required", true],
-  ["個人トレー作製", "required", false],
-  ["TEC作製", "required", false],
-  ["NG作製", "required", false],
-  ["プレオルソ発注", "required", true],
-  ["紹介状作製", "required", false],
-  ["シェード写真送信", "required", false],
-  ["メンブレン発注", "optional", true],
-  ["エムドゲイン発注", "optional", true],
-  ["リグロス発注", "optional", true],
-  ["AOSS発注", "optional", true],
-  ["ボナーク発注", "optional", true],
-  ["テルプラグ発注", "optional", true],
-  ["振り込み・支払い", "none", false],
-  ["事務仕事", "none", false],
-  ["その他", "optional", false]
-];
-
-let state = loadState();
+let state = storage.loadLocalState();
 let activeView = "today";
 let selectedTypeId = "";
 let selectedDueType = "today";
@@ -53,13 +33,17 @@ const els = {
   taskForm: $("#taskForm"),
   typeForm: $("#typeForm"),
   typePicker: $("#typePicker"),
-  typeList: $("#typeList")
+  typeList: $("#typeList"),
+  saveModeBadge: $("#saveModeBadge"),
+  syncNotice: $("#syncNotice"),
+  loginStatusText: $("#loginStatusText")
 };
 
 document.addEventListener("DOMContentLoaded", init);
 
-function init() {
+async function init() {
   bindEvents();
+  await tryInitialCloudLoad();
   render();
   registerServiceWorker();
 }
@@ -82,6 +66,10 @@ function bindEvents() {
   $("#backupButton").addEventListener("click", exportJson);
   $("#importInput").addEventListener("change", importJson);
   $("#resetDemoButton").addEventListener("click", resetToInitialData);
+  $("#loginButton").addEventListener("click", loginToSupabase);
+  $("#logoutButton").addEventListener("click", logoutFromSupabase);
+  $("#migrateButton").addEventListener("click", migrateLocalToSupabase);
+  $("#reloadSupabaseButton").addEventListener("click", reloadFromSupabase);
 
   $$(".due-picker button").forEach((button) => {
     button.addEventListener("click", () => chooseDueType(button.dataset.due));
@@ -98,81 +86,16 @@ function bindEvents() {
   });
 }
 
-function createInitialState() {
-  const now = new Date().toISOString();
-  return {
-    version: 1,
-    exported_at: null,
-    taskTypes: initialTaskTypeNames.map(([name, chartMode, isOrder], index) => ({
-      id: cryptoId("type"),
-      name,
-      sort_order: index + 1,
-      active: true,
-      chart_number_mode: chartMode,
-      default_due_type: isOrder ? "tomorrow" : "today",
-      category_tags: isOrder ? [ORDER_TAG] : [],
-      created_at: now,
-      updated_at: now
-    })),
-    tasks: []
-  };
+async function tryInitialCloudLoad() {
+  const status = syncManager.getStatus();
+  if (!status.configured || !status.loggedIn) return;
+  state = await syncManager.loadFromSupabase(state);
 }
 
-// Storage is intentionally isolated behind loadState()/persist() so a future Supabase adapter can replace it.
-function loadState() {
-  const fallback = createInitialState();
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return normalizeState(parsed, fallback);
-  } catch (error) {
-    console.warn("Failed to load state", error);
-    return fallback;
-  }
-}
-
-function normalizeState(data, fallback) {
-  const now = new Date().toISOString();
-  const taskTypes = Array.isArray(data.taskTypes) ? data.taskTypes : fallback.taskTypes;
-  const tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-  return {
-    version: 1,
-    exported_at: data.exported_at || null,
-    taskTypes: taskTypes.map((type, index) => ({
-      id: type.id || cryptoId("type"),
-      name: type.name || "名称未設定",
-      sort_order: Number(type.sort_order || index + 1),
-      active: type.active !== false,
-      chart_number_mode: ["required", "optional", "none"].includes(type.chart_number_mode)
-        ? type.chart_number_mode
-        : "optional",
-      default_due_type: ["today", "tomorrow", "this_week", "next_week", "none"].includes(type.default_due_type)
-        ? type.default_due_type
-        : "today",
-      category_tags: Array.isArray(type.category_tags) ? type.category_tags : [],
-      created_at: type.created_at || now,
-      updated_at: type.updated_at || now
-    })),
-    tasks: tasks.map((task) => ({
-      id: task.id || cryptoId("task"),
-      task_type_id: task.task_type_id || "",
-      title: task.title || "",
-      chart_number: task.chart_number || "",
-      memo: task.memo || "",
-      due_date: task.due_date || null,
-      priority: task.priority || "normal",
-      status: task.status === "completed" ? "completed" : "active",
-      created_at: task.created_at || now,
-      completed_at: task.completed_at || null,
-      archived: Boolean(task.archived)
-    }))
-  };
-}
-
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+async function saveState() {
+  state = storage.normalizeState(state);
+  await syncManager.save(state);
+  renderSyncStatus();
 }
 
 function render() {
@@ -181,6 +104,33 @@ function render() {
   renderTypePicker();
   renderTypeList();
   updateDueButtons();
+  renderSyncStatus();
+}
+
+function renderSyncStatus() {
+  const status = syncManager.getStatus();
+  const labelMap = {
+    local: "保存：この端末のみ",
+    not_logged_in: "未ログイン",
+    supabase: "保存：Supabase同期中",
+    offline: "保存：オフライン一時保存"
+  };
+  const label = labelMap[status.status] || "保存：この端末のみ";
+  els.saveModeBadge.textContent = label;
+  els.loginStatusText.textContent = status.loggedIn ? `ログイン中：${status.email}` : status.configured ? "未ログイン" : "Supabase未設定";
+  els.syncNotice.classList.toggle("is-supabase", status.status === "supabase");
+  els.syncNotice.classList.toggle("is-offline", status.status === "offline");
+  els.syncNotice.innerHTML = `
+    <strong>${escapeHtml(label)}</strong>
+    <span>${escapeHtml(syncStatusMessage(status))}</span>
+  `;
+}
+
+function syncStatusMessage(status) {
+  if (status.status === "supabase") return "ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。";
+  if (status.status === "offline") return `Supabase接続に失敗しました。localStorage版として継続します。${status.lastError || ""}`;
+  if (status.status === "not_logged_in") return "Supabase設定はあります。ログインすると同期を使えます。";
+  return "Supabase設定がないため、これまで通りlocalStorageだけで動作します。";
 }
 
 function setView(view) {
@@ -302,7 +252,7 @@ function renderTypeList() {
   els.typeList.innerHTML = sortedTypes(true).map((type, index, list) => {
     const isUsed = usedTypeIds.has(type.id);
     const chartLabel = { required: "カルテ必須", optional: "カルテ任意", none: "カルテ不要" }[type.chart_number_mode];
-    const orderLabel = type.category_tags.includes(ORDER_TAG) ? "発注・準備" : "通常";
+    const orderLabel = isSupplyType(type) ? "発注・準備" : "通常";
     return `
       <article class="type-card ${type.active ? "" : "is-inactive"}">
         <div class="type-card-head">
@@ -339,6 +289,20 @@ function chooseTaskType(typeId) {
   chooseDueType(type.default_due_type || "today");
   updateChartModeHint();
   renderTypePicker();
+  guideAfterTypeSelection(type);
+}
+
+function guideAfterTypeSelection(type) {
+  const chartInput = $("#chartNumber");
+  const duePicker = $(".due-picker");
+  if (type.chart_number_mode === "required") {
+    chartInput.focus();
+    chartInput.scrollIntoView({ block: "center", behavior: "smooth" });
+    return;
+  }
+  if (type.chart_number_mode === "none") {
+    duePicker.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 }
 
 function chooseDueType(dueType) {
@@ -367,7 +331,7 @@ function updateChartModeHint() {
     chartInput.required = true;
     chartInput.disabled = false;
   } else if (type.chart_number_mode === "none") {
-    $("#chartModeHint").textContent = "この種別ではカルテ番号を保存しません。";
+    $("#chartModeHint").textContent = "この種別ではカルテ番号を保存しません。期限を選んで保存できます。";
     chartInput.required = false;
     chartInput.value = "";
     chartInput.disabled = true;
@@ -401,7 +365,15 @@ function openTaskModal(task = null) {
   renderTypePicker();
   updateDueButtons();
   els.taskModal.hidden = false;
-  $("#taskTitle").focus();
+
+  if (task) {
+    $("#taskTitle").focus();
+    return;
+  }
+  // Chairside entry starts at task-type buttons. Avoid auto-focus so mobile keyboards stay closed.
+  setTimeout(() => {
+    els.typePicker.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, 0);
 }
 
 function closeTaskModal() {
@@ -420,7 +392,7 @@ function resetTaskForm() {
   renderTypePicker();
 }
 
-function saveTaskFromForm(event) {
+async function saveTaskFromForm(event) {
   event.preventDefault();
   const type = getTaskType(selectedTypeId);
   const chartNumber = type && type.chart_number_mode === "none" ? "" : normalizeChartNumber($("#chartNumber").value);
@@ -441,7 +413,8 @@ function saveTaskFromForm(event) {
     due_date: dueDate,
     priority: "normal",
     status: "active",
-    archived: false
+    archived: false,
+    updated_at: now
   };
 
   if (id) {
@@ -450,19 +423,20 @@ function saveTaskFromForm(event) {
     Object.assign(task, payload);
   } else {
     state.tasks.unshift({
-      id: cryptoId("task"),
+      id: storage.cryptoId("task"),
+      user_id: null,
       ...payload,
       created_at: now,
       completed_at: null
     });
   }
-  persist();
+  await saveState();
   closeTaskModal();
   render();
   setView(activeView);
 }
 
-function handleTaskAction(action, taskId) {
+async function handleTaskAction(action, taskId) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
   const now = new Date().toISOString();
@@ -470,24 +444,35 @@ function handleTaskAction(action, taskId) {
   if (action === "complete") {
     task.status = "completed";
     task.completed_at = now;
+    task.updated_at = now;
   }
   if (action === "reactivate") {
     task.status = "active";
     task.completed_at = null;
+    task.updated_at = now;
   }
   if (action === "edit") {
     openTaskModal(task);
     return;
   }
-  if (action === "tomorrow") task.due_date = resolveDueDate("tomorrow");
-  if (action === "next_week") task.due_date = resolveDueDate("next_week");
-  if (action === "no_due") task.due_date = null;
+  if (action === "tomorrow") {
+    task.due_date = resolveDueDate("tomorrow");
+    task.updated_at = now;
+  }
+  if (action === "next_week") {
+    task.due_date = resolveDueDate("next_week");
+    task.updated_at = now;
+  }
+  if (action === "no_due") {
+    task.due_date = null;
+    task.updated_at = now;
+  }
   if (action === "delete") {
     if (!confirm("このタスクを削除しますか。完了履歴として残したい場合は削除ではなく完了にしてください。")) return;
     state.tasks = state.tasks.filter((item) => item.id !== taskId);
   }
 
-  persist();
+  await saveState();
   render();
   setView(activeView);
 }
@@ -506,7 +491,7 @@ function openTypeModal(type = null) {
     $("#typeName").value = type.name;
     $("#typeChartMode").value = type.chart_number_mode;
     $("#typeDefaultDue").value = type.default_due_type;
-    $("#typeOrderTag").checked = type.category_tags.includes(ORDER_TAG);
+    $("#typeOrderTag").checked = isSupplyType(type);
     $("#typeActive").checked = type.active;
   }
   els.typeModal.hidden = false;
@@ -517,17 +502,18 @@ function closeTypeModal() {
   els.typeModal.hidden = true;
 }
 
-function saveTypeFromForm(event) {
+async function saveTypeFromForm(event) {
   event.preventDefault();
   const id = $("#typeId").value;
   const now = new Date().toISOString();
-  const tags = $("#typeOrderTag").checked ? [ORDER_TAG] : [];
+  const isSupply = $("#typeOrderTag").checked;
   const payload = {
     name: $("#typeName").value.trim(),
     chart_number_mode: $("#typeChartMode").value,
     default_due_type: $("#typeDefaultDue").value,
     active: $("#typeActive").checked,
-    category_tags: tags,
+    is_supply_related: isSupply,
+    category_tags: isSupply ? [storage.ORDER_TAG] : [],
     updated_at: now
   };
   if (!payload.name) return;
@@ -538,7 +524,8 @@ function saveTypeFromForm(event) {
     Object.assign(type, payload);
   } else {
     state.taskTypes.push({
-      id: cryptoId("type"),
+      id: storage.cryptoId("type"),
+      user_id: null,
       ...payload,
       sort_order: nextSortOrder(),
       created_at: now
@@ -546,13 +533,13 @@ function saveTypeFromForm(event) {
   }
 
   renumberTypes();
-  persist();
+  await saveState();
   closeTypeModal();
   render();
   setView("types");
 }
 
-function handleTypeAction(action, typeId) {
+async function handleTypeAction(action, typeId) {
   const type = getTaskType(typeId);
   if (!type) return;
   const used = state.tasks.some((task) => task.task_type_id === typeId);
@@ -581,7 +568,7 @@ function handleTypeAction(action, typeId) {
   }
 
   renumberTypes();
-  persist();
+  await saveState();
   render();
   setView("types");
 }
@@ -634,11 +621,11 @@ function importJson(event) {
     return;
   }
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const imported = JSON.parse(String(reader.result));
-      state = normalizeState(imported, createInitialState());
-      persist();
+      state = storage.normalizeState(imported, storage.createInitialState());
+      await saveState();
       render();
       setView("today");
       alert("JSONを読み込みました。");
@@ -652,12 +639,56 @@ function importJson(event) {
   reader.readAsText(file);
 }
 
-function resetToInitialData() {
+async function resetToInitialData() {
   if (!confirm("タスクとタスク種別を初期状態に戻します。現在のデータは上書きされます。実行前にJSONを書き出してください。")) return;
-  state = createInitialState();
-  persist();
+  state = storage.createInitialState();
+  await saveState();
   render();
   setView("today");
+}
+
+async function loginToSupabase() {
+  try {
+    await syncManager.signIn($("#loginEmail").value.trim(), $("#loginPassword").value);
+    $("#loginPassword").value = "";
+    state = await syncManager.loadFromSupabase(state);
+    render();
+    alert("Supabaseにログインしました。");
+  } catch (error) {
+    alert(error.message);
+    renderSyncStatus();
+  }
+}
+
+async function logoutFromSupabase() {
+  try {
+    await syncManager.signOut();
+    renderSyncStatus();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function migrateLocalToSupabase() {
+  if (!confirm("localStorageデータをSupabaseへ移行します。このデータにはカルテ番号が含まれます。AuthとRLSが有効な空または移行先として問題ない環境ですか。")) {
+    return;
+  }
+  try {
+    await syncManager.migrateLocalToSupabase(state);
+    render();
+    alert("Supabaseへ移行しました。");
+  } catch (error) {
+    alert(error.message);
+    renderSyncStatus();
+  }
+}
+
+async function reloadFromSupabase() {
+  if (!confirm("Supabaseの内容で画面を再読み込みします。現在のlocalStorageデータはキャッシュとして上書きされます。")) {
+    return;
+  }
+  state = await syncManager.loadFromSupabase(state);
+  render();
 }
 
 function isTodayWork(task) {
@@ -681,9 +712,12 @@ function isToday(dateString) {
   return dateString === toDateInputValue(new Date());
 }
 
+function isSupplyType(type) {
+  return Boolean(type && (type.is_supply_related || (Array.isArray(type.category_tags) && type.category_tags.includes(storage.ORDER_TAG))));
+}
+
 function isOrderTask(task) {
-  const type = getTaskType(task.task_type_id);
-  return Boolean(type && type.category_tags.includes(ORDER_TAG));
+  return isSupplyType(getTaskType(task.task_type_id));
 }
 
 function isLaterTask(task) {
@@ -775,13 +809,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function cryptoId(prefix) {
-  if (window.crypto && window.crypto.randomUUID) {
-    return `${prefix}_${window.crypto.randomUUID()}`;
-  }
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function registerServiceWorker() {

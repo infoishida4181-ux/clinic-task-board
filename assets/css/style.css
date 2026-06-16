@@ -58,6 +58,28 @@ button {
   margin-bottom: 14px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.save-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid #cfe5df;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: #23443f;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .eyebrow {
   margin: 0 0 2px;
   color: var(--primary);
@@ -209,6 +231,29 @@ h3 {
 .settings-grid {
   display: grid;
   gap: 10px;
+}
+
+.sync-notice {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #cfe5df;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  color: #23443f;
+}
+
+.sync-notice.is-offline {
+  border-color: #ffd4a8;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.sync-notice.is-supabase {
+  border-color: #bde5dd;
+  background: #ecfbf7;
+  color: var(--primary-dark);
 }
 
 .task-card,
@@ -449,6 +494,10 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.type-picker {
+  scroll-margin-top: 14px;
 }
 
 .type-picker button,

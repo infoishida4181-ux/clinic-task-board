@@ -1,9 +1,12 @@
-const CACHE_NAME = "clinic-task-board-v1";
+const CACHE_NAME = "clinic-task-board-v2";
 const APP_ASSETS = [
   "./",
   "./index.html",
   "./manifest.json",
   "./assets/css/style.css",
+  "./assets/js/storage.js",
+  "./assets/js/supabase-client.js",
+  "./assets/js/sync.js",
   "./assets/js/app.js",
   "./assets/icons/icon.svg"
 ];
