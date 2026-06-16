@@ -1,5 +1,5 @@
 const storage = window.ClinicTaskStorage;
-const APP_VERSION = "2026-06-17-category-dedupe";
+const APP_VERSION = "2026-06-17-delete-tombstone";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
@@ -134,6 +134,7 @@ function renderSyncStatus() {
   };
   const label = labelMap[status.status] || "保存：この端末のみ";
   const pendingCount = countPendingTasks();
+  const pendingDeleteCount = countPendingDeletes();
   els.saveModeBadge.textContent = label;
   els.loginStatusText.textContent = status.loggedIn ? `ログイン中：${status.email}` : status.configured ? "未ログイン" : "Supabase未設定";
   els.syncNotice.classList.toggle("is-supabase", status.status === "supabase");
@@ -141,21 +142,30 @@ function renderSyncStatus() {
   els.syncNotice.classList.toggle("is-failed", status.status === "failed");
   els.syncNotice.innerHTML = `
     <strong>${escapeHtml(label)}</strong>
-    <span>${escapeHtml(syncStatusMessage(status, pendingCount))}</span>
+    <span>${escapeHtml(syncStatusMessage(status, pendingCount, pendingDeleteCount))}</span>
   `;
+  const pendingText = $("#pendingSyncText");
+  if (pendingText) {
+    pendingText.textContent = `未同期タスク：${pendingCount}件 / 削除待ちタスク：${pendingDeleteCount}件`;
+  }
 }
 
-function syncStatusMessage(status, pendingCount) {
+function syncStatusMessage(status, pendingCount, pendingDeleteCount) {
   const pendingText = pendingCount ? ` 未同期タスク：${pendingCount}件。` : "";
-  if (status.status === "supabase") return `ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。${pendingText}`;
-  if (status.status === "failed") return `Supabase保存に失敗しました。タスクは端末内に残しています。${pendingText}${status.lastError || ""}`;
+  const deleteText = pendingDeleteCount ? ` 削除待ちタスク：${pendingDeleteCount}件。` : "";
+  if (status.status === "supabase") return `ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。${pendingText}${deleteText}`;
+  if (status.status === "failed") return `Supabase保存に失敗しました。タスクは端末内に残しています。${pendingText}${deleteText}${status.lastError || ""}`;
   if (status.status === "offline") return `Supabase接続に失敗しました。localStorage版として継続します。${status.lastError || ""}`;
   if (status.status === "not_logged_in") return "Supabase設定はあります。ログインすると同期を使えます。";
   return "Supabase設定がないため、これまで通りlocalStorageだけで動作します。";
 }
 
 function countPendingTasks() {
-  return state.tasks.filter((task) => task.pendingSync || task.sync_error).length;
+  return state.tasks.filter((task) => !isDeletedTask(task) && (task.pendingSync || task.sync_error)).length;
+}
+
+function countPendingDeletes() {
+  return state.tasks.filter((task) => task.pendingDelete).length;
 }
 
 function setView(view) {
@@ -165,11 +175,11 @@ function setView(view) {
 }
 
 function activeTasks() {
-  return state.tasks.filter((task) => task.status === "active" && !task.archived);
+  return state.tasks.filter((task) => task.status === "active" && !task.archived && !isDeletedTask(task));
 }
 
 function completedTasks() {
-  return state.tasks.filter((task) => task.status === "completed" && !task.archived);
+  return state.tasks.filter((task) => task.status === "completed" && !task.archived && !isDeletedTask(task));
 }
 
 function getTaskType(id) {
@@ -281,7 +291,7 @@ function renderTypePicker() {
 }
 
 function renderTypeList() {
-  const usedTypeIds = new Set(state.tasks.map((task) => task.task_type_id).filter(Boolean));
+  const usedTypeIds = new Set(state.tasks.filter((task) => !isDeletedTask(task)).map((task) => task.task_type_id).filter(Boolean));
   els.typeList.innerHTML = sortedTypes(true).map((type, index, list) => {
     const isUsed = usedTypeIds.has(type.id);
     const chartLabel = { required: "カルテ必須", optional: "カルテ任意", none: "カルテ不要" }[type.chart_number_mode];
@@ -513,7 +523,7 @@ async function handleTaskAction(action, taskId) {
   }
   if (action === "delete") {
     if (!confirm("このタスクを削除しますか。完了履歴として残したい場合は削除ではなく完了にしてください。")) return;
-    state.tasks = state.tasks.filter((item) => item.id !== taskId);
+    markTaskDeleted(task, now);
   }
 
   const saveResult = await saveState();
@@ -526,6 +536,16 @@ function markTaskPending(task) {
   if (!syncManager.getStatus().loggedIn) return;
   task.synced = false;
   task.pendingSync = true;
+  task.pendingDelete = false;
+  task.sync_error = "";
+}
+
+function markTaskDeleted(task, now = new Date().toISOString()) {
+  task.deleted_at = now;
+  task.pendingDelete = Boolean(syncManager.getStatus().loggedIn);
+  task.pendingSync = false;
+  task.synced = false;
+  task.updated_at = now;
   task.sync_error = "";
 }
 
@@ -789,7 +809,16 @@ async function runSupabaseConnectionTest() {
 function notifySaveFailure(saveResult) {
   if (!saveResult || saveResult.ok !== false || !syncManager.getStatus().loggedIn) return;
   if (saveResult.reason === "local" || saveResult.reason === "not_logged_in") return;
+  const hasPendingDelete = state.tasks.some((task) => task.pendingDelete);
+  if (hasPendingDelete) {
+    alert(`Supabase削除に失敗しました。端末内では削除済みとして保持し、次回同期時に再試行します。\n${syncManager.getStatus().lastError || ""}`);
+    return;
+  }
   alert(`Supabase保存失敗。タスクはこの端末に未同期として残しました。\n${syncManager.getStatus().lastError || ""}`);
+}
+
+function isDeletedTask(task) {
+  return Boolean(task && (task.deleted_at || task.pendingDelete));
 }
 
 function isTodayWork(task) {

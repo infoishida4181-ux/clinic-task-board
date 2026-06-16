@@ -142,6 +142,7 @@ function normalizeTaskType(type, index, now) {
 }
 
 function normalizeTask(task, now) {
+  const deletedAt = task.deleted_at || null;
   return {
     id: task.id || cryptoId("task"),
     user_id: task.user_id || null,
@@ -156,8 +157,10 @@ function normalizeTask(task, now) {
     created_at: task.created_at || now,
     updated_at: task.updated_at || task.created_at || now,
     completed_at: task.completed_at || null,
+    deleted_at: deletedAt,
     synced: Boolean(task.synced),
     pendingSync: Boolean(task.pendingSync),
+    pendingDelete: Boolean(task.pendingDelete),
     sync_error: task.sync_error || ""
   };
 }
@@ -217,15 +220,23 @@ function canonicalTypeName(name) {
 function mergeRemoteState(localState, remoteState) {
   const normalizedLocal = normalizeState(localState, createInitialState());
   const normalizedRemote = normalizeState(remoteState, createInitialState());
+  const locallyDeletedIds = new Set(
+    normalizedLocal.tasks
+      .filter((task) => task.deleted_at || task.pendingDelete)
+      .map((task) => task.id)
+  );
+  const remoteVisibleTasks = normalizedRemote.tasks.filter((task) => !locallyDeletedIds.has(task.id));
   const remoteTaskIds = new Set(normalizedRemote.tasks.map((task) => task.id));
+  // Local deletion tombstones win over remote rows so a stale Supabase task cannot reappear.
+  const localDeletedTasks = normalizedLocal.tasks.filter((task) => task.deleted_at || task.pendingDelete);
   // Local failed saves stay on the device until a later Supabase save succeeds.
   const localPendingTasks = normalizedLocal.tasks.filter((task) =>
-    (task.pendingSync || task.sync_error) && !remoteTaskIds.has(task.id)
+    (task.pendingSync || task.sync_error) && !task.deleted_at && !task.pendingDelete && !remoteTaskIds.has(task.id)
   );
 
   return normalizeState({
     ...normalizedRemote,
-    tasks: [...localPendingTasks, ...normalizedRemote.tasks]
+    tasks: [...localDeletedTasks, ...localPendingTasks, ...remoteVisibleTasks]
   }, createInitialState());
 }
 

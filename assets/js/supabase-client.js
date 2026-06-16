@@ -109,7 +109,7 @@
     }
 
     function buildTaskPayloads(state, userId) {
-      return state.tasks.map((task) => ({
+      return state.tasks.filter((task) => !task.deleted_at && !task.pendingDelete).map((task) => ({
         id: task.id,
         user_id: userId,
         task_type_id: task.task_type_id || null,
@@ -142,9 +142,11 @@
       });
     }
 
-    async function deleteTask(taskId) {
+    async function deleteTasks(taskIds) {
       requireLogin();
-      return request(`/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`, {
+      if (!taskIds.length) return null;
+      const encodedIds = taskIds.map((id) => `"${String(id).replaceAll('"', '\\"')}"`).join(",");
+      return request(`/rest/v1/tasks?id=in.(${encodedIds})`, {
         method: "DELETE",
         headers: { Prefer: "return=minimal" }
       });
@@ -183,7 +185,7 @@
       await request("/rest/v1/task_types?select=id&limit=1");
       await request("/rest/v1/tasks?select=id&limit=1");
       await upsertTasks([testTask]);
-      await deleteTask(testTask.id);
+      await deleteTasks([testTask.id]);
 
       return {
         userId,
@@ -211,6 +213,7 @@
       signOut,
       loadAll,
       upsertAll,
+      deleteTasks,
       deleteTaskTypes,
       runConnectionTest
     };

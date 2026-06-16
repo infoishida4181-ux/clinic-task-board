@@ -51,12 +51,13 @@
               last_synced_at: new Date().toISOString()
             }
           });
-          await persistStateAndDeleteDuplicates(seededState);
+          const mergedSeededState = storage.mergeRemoteState(localState, seededState);
+          await persistStateAndDeleteDuplicates(mergedSeededState);
           status = "supabase";
           lastError = "";
           lastErrorDetail = null;
-          storage.saveLocalState(seededState);
-          return seededState;
+          storage.saveLocalState(mergedSeededState);
+          return mergedSeededState;
         }
 
         const normalizedRemote = storage.normalizeState({
@@ -112,6 +113,7 @@
           user_id: result.userId,
           synced: true,
           pendingSync: false,
+          pendingDelete: false,
           sync_error: ""
         }));
         syncedState.sync = {
@@ -127,12 +129,24 @@
         lastErrorDetail = errorToDetail(error);
         const failedState = storage.normalizeState(state);
         // Supabase failures must not delete chairside input; keep changed tasks pending locally.
-        failedState.tasks = failedState.tasks.map((task) => task.pendingSync || !task.synced ? {
-          ...task,
-          synced: false,
-          pendingSync: true,
-          sync_error: lastError
-        } : task);
+        failedState.tasks = failedState.tasks.map((task) => {
+          if (task.deleted_at || task.pendingDelete) {
+            // Keep the delete intent locally; the task stays hidden and delete will retry later.
+            return {
+              ...task,
+              synced: false,
+              pendingSync: false,
+              pendingDelete: true,
+              sync_error: lastError
+            };
+          }
+          return task.pendingSync || !task.synced ? {
+            ...task,
+            synced: false,
+            pendingSync: true,
+            sync_error: lastError
+          } : task;
+        });
         storage.saveLocalState(failedState);
         console.error("Supabase save failed", lastErrorDetail || error);
         return { ok: false, state: failedState, error: lastErrorDetail };
@@ -174,8 +188,19 @@
     }
 
     async function persistStateAndDeleteDuplicates(state) {
-      // Save remapped tasks first, then delete duplicate task types so references are never lost.
+      // Save visible/remapped tasks, apply pending task deletes, then delete duplicate types.
+      const pendingDeleteIds = state.tasks
+        .filter((task) => task.deleted_at || task.pendingDelete)
+        .map((task) => task.id);
       const result = await client.upsertAll(state);
+      if (pendingDeleteIds.length) {
+        try {
+          await client.deleteTasks(pendingDeleteIds);
+        } catch (error) {
+          error.taskIds = pendingDeleteIds;
+          throw error;
+        }
+      }
       if (Array.isArray(state.duplicateTypeIds) && state.duplicateTypeIds.length) {
         await client.deleteTaskTypes(state.duplicateTypeIds);
       }
@@ -221,6 +246,7 @@
       hint: error.hint || "",
       code: error.code || "",
       path: error.path || "",
+      taskIds: Array.isArray(error.taskIds) ? error.taskIds : [],
       body: error.body || null
     };
   }

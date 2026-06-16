@@ -8,6 +8,7 @@
 - 患者マスターは作らない
 - 保存する患者識別情報はカルテ番号のみ
 - カルテ番号は院内では患者識別につながるため慎重に扱う
+- 削除済みタスクはSupabase再読み込みでも復活させない
 - タスク種別は編集可能なマスターとして扱う
 - 使用済みタスク種別は履歴保護のため原則 `active=false` の非表示扱いにする
 - Supabase化する場合はAuthとRLSを必ず有効にする
@@ -99,6 +100,8 @@ Supabaseログイン時に `task_types` が0件だった場合は、localStorage
 
 タスク追加・編集時は、まずlocalStorageに保存します。Supabase保存に成功した場合は同期済み、失敗した場合は `pendingSync=true` として端末内に残し、保存モードに `Supabase保存失敗・端末内一時保存` と未同期件数を表示します。Supabaseから再読み込みしても、未同期タスクは消さずにlocalStorage側へ残します。
 
+タスク削除時はlocalStorageに `deleted_at` を記録し、Supabaseログイン済みの場合は `pendingDelete=true` としてSupabaseの `tasks` deleteを実行します。削除済みタスクは通常画面・件数・Supabase再読み込み結果に表示しません。Supabase削除に失敗した場合も端末内では削除済みとして保持し、次回同期時に削除を再試行します。
+
 設定画面の `Supabase接続テスト` では、ログインユーザーID、`task_types` select、`tasks` select、`tasks` test insert、`tasks` test delete を確認します。失敗時はHTTP status、message、details、hint、pathを表示します。
 
 リアルタイム同期はまだ実装していません。将来追加する場合は `assets/js/sync.js` にRealtime購読を足す想定です。
@@ -152,6 +155,13 @@ on public.task_types (user_id, lower(btrim(name)));
 - `updated_at`
 - `completed_at`
 
+localStorageキャッシュ上では、削除復活防止のため次の同期用フィールドも保持します。
+
+- `deleted_at`
+- `pendingSync`
+- `pendingDelete`
+- `sync_error`
+
 ## JSONバックアップ
 
 JSONエクスポート・インポートを用意しています。
@@ -166,7 +176,7 @@ JSONエクスポート・インポートを用意しています。
 
 `manifest.json` と `service-worker.js` は残していますが、Supabase同期確認中はService Worker登録を無効化しています。アプリ起動時に既存のService Worker登録を解除し、Cache Storageの既存cacheも削除します。
 
-`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-category-dedupe` を確認してください。
+`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-delete-tombstone` を確認してください。
 
 ## 主なファイル
 

@@ -159,6 +159,7 @@
                 <button class="ghost-button" id="reloadSupabaseButton" type="button">Supabaseから再読み込み</button>
                 <button class="ghost-button" id="connectionTestButton" type="button">Supabase接続テスト</button>
               </div>
+              <p id="pendingSyncText">未同期タスク：0件 / 削除待ちタスク：0件</p>
               <p class="sync-test-result" id="connectionTestResult"></p>
             </div>
             <div class="settings-block">
@@ -186,7 +187,7 @@
             </div>
             <div class="settings-block">
               <h3>バージョン</h3>
-              <p id="appVersionText">Version: 2026-06-17-category-dedupe</p>
+              <p id="appVersionText">Version: 2026-06-17-delete-tombstone</p>
               <p>Supabase同期確認中はService Workerを無効化しています。</p>
             </div>
           </div>
