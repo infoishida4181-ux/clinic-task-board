@@ -1,17 +1,21 @@
 (function () {
   function createSyncManager({ storage, supabase }) {
     const client = supabase.hasSupabaseConfig() ? supabase.createClient(window.SUPABASE_CONFIG) : null;
-    let status = client && client.getSession() ? "supabase" : client ? "not_logged_in" : "local";
+    let status = initialStatus();
     let lastError = "";
     let lastErrorDetail = null;
     let lastSaveResult = null;
 
     function getStatus() {
+      const authState = client ? client.getAuthState() : { hasSession: false, expired: false, email: "" };
+      if (client && authState.expired && status === "supabase") status = "expired";
       return {
         status,
         configured: Boolean(client),
-        loggedIn: Boolean(client && client.getSession()),
-        email: client && client.getSession() && client.getSession().user ? client.getSession().user.email : "",
+        hasSession: Boolean(client && authState.hasSession),
+        loggedIn: Boolean(client && authState.hasSession && !authState.expired),
+        expired: Boolean(client && authState.expired),
+        email: authState.email || "",
         lastError,
         lastErrorDetail,
         lastSaveResult
@@ -23,12 +27,15 @@
       await client.signIn(email, password);
       status = "supabase";
       lastError = "";
+      lastErrorDetail = null;
     }
 
     async function signOut() {
       ensureConfigured();
       await client.signOut();
       status = "not_logged_in";
+      lastError = "";
+      lastErrorDetail = null;
     }
 
     async function loadFromSupabase(localState) {
@@ -86,9 +93,10 @@
         storage.saveLocalState(normalized);
         return normalized;
       } catch (error) {
-        status = "failed";
+        status = error.loginExpired ? "expired" : "failed";
         lastError = formatSupabaseError(error);
         lastErrorDetail = errorToDetail(error);
+        // Never replace local data with empty remote state when the session expired.
         console.error("Supabase load failed", lastErrorDetail || error);
         return localState;
       }
@@ -124,11 +132,11 @@
         storage.saveLocalState(syncedState);
         return { ok: true, state: syncedState, result };
       } catch (error) {
-        status = "failed";
+        status = error.loginExpired ? "expired" : "failed";
         lastError = formatSupabaseError(error);
         lastErrorDetail = errorToDetail(error);
         const failedState = storage.normalizeState(state);
-        // Supabase failures must not delete chairside input; keep changed tasks pending locally.
+        // Supabase failures, including login expiry, must not delete chairside input; keep local work pending.
         failedState.tasks = failedState.tasks.map((task) => {
           if (task.deleted_at || task.pendingDelete) {
             // Keep the delete intent locally; the task stays hidden and delete will retry later.
@@ -149,7 +157,7 @@
         });
         storage.saveLocalState(failedState);
         console.error("Supabase save failed", lastErrorDetail || error);
-        return { ok: false, state: failedState, error: lastErrorDetail };
+        return { ok: false, state: failedState, error: lastErrorDetail, reason: status };
       }
     }
 
@@ -179,7 +187,7 @@
         lastErrorDetail = null;
         return { ok: true, result };
       } catch (error) {
-        status = "failed";
+        status = error.loginExpired ? "expired" : "failed";
         lastError = formatSupabaseError(error);
         lastErrorDetail = errorToDetail(error);
         console.error("Supabase connection test failed", lastErrorDetail || error);
@@ -216,6 +224,13 @@
       if (!client.getSession()) throw new Error("Supabaseにログインしてください。");
     }
 
+    function initialStatus() {
+      if (!client) return "local";
+      const authState = client.getAuthState();
+      if (!authState.hasSession) return "not_logged_in";
+      return authState.expired ? "expired" : "supabase";
+    }
+
     return {
       getStatus,
       signIn,
@@ -229,6 +244,7 @@
 
   function formatSupabaseError(error) {
     if (!error) return "Supabase保存失敗";
+    if (error.loginExpired) return "ログイン期限が切れました。再ログインしてください。";
     const parts = [];
     if (error.status) parts.push(`HTTP ${error.status}`);
     if (error.message) parts.push(error.message);
@@ -245,6 +261,7 @@
       details: error.details || "",
       hint: error.hint || "",
       code: error.code || "",
+      loginExpired: Boolean(error.loginExpired),
       path: error.path || "",
       taskIds: Array.isArray(error.taskIds) ? error.taskIds : [],
       body: error.body || null

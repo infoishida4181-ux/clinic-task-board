@@ -9,6 +9,9 @@
 - 保存する患者識別情報はカルテ番号のみ
 - カルテ番号は院内では患者識別につながるため慎重に扱う
 - 削除済みタスクはSupabase再読み込みでも復活させない
+- ログイン期限切れでも未同期タスク・削除待ちタスクは消さない
+- ログイン期限切れでデータを消さない。Supabaseから空データで上書きしない
+- JWT expired時は自動更新を試み、失敗時は再ログインを促す
 - 分類フラグはカルテ番号入力要否とは独立して管理する
 - タスク種別は編集可能なマスターとして扱う
 - 使用済みタスク種別は履歴保護のため原則 `active=false` の非表示扱いにする
@@ -48,6 +51,7 @@
 
 - `保存：この端末のみ`: Supabase未設定。localStorageのみで動作
 - `未ログイン`: Supabase設定はあるが未ログイン
+- `ログイン期限切れ・端末内一時保存`: 保存済みJWTを更新できないため、再ログインが必要
 - `保存：Supabase同期中`: ログイン済み。変更をlocalStorageへ保存し、Supabaseへも保存
 - `保存：オフライン一時保存`: Supabase保存に失敗。localStorage版として継続
 
@@ -106,6 +110,10 @@ Supabaseログイン時に `task_types` が0件だった場合は、localStorage
 タスク削除時はlocalStorageに `deleted_at` を記録し、Supabaseログイン済みの場合は `pendingDelete=true` としてSupabaseの `tasks` deleteを実行します。削除済みタスクは通常画面・件数・Supabase再読み込み結果に表示しません。Supabase削除に失敗した場合も端末内では削除済みとして保持し、次回同期時に削除を再試行します。
 
 設定画面の `Supabase接続テスト` では、ログインユーザーID、`task_types` select、`tasks` select、`tasks` test insert、`tasks` test delete を確認します。失敗時はHTTP status、message、details、hint、pathを表示します。
+
+Supabase REST APIで `JWT expired` が出た場合は、保存済みの `refresh_token` でセッション更新を試みます。更新に成功した場合は失敗したAPIを1回だけ再実行し、接続テストでは `セッション更新：OK` と表示します。更新できない場合は `ログイン期限切れ・端末内一時保存` と表示し、再ログインを促します。この場合もlocalStorageの未同期タスク、削除待ちタスク、削除済み墓標は消しません。
+
+ログイン期限切れ状態でタスクを追加・編集・削除した場合も、保存済みセッションが残っている間は `pendingSync` / `pendingDelete` として端末内に保持します。再ログイン後にSupabase保存を再試行できるようにし、期限切れを理由にタスク本体・taskTypes・未同期データを初期化しません。
 
 リアルタイム同期はまだ実装していません。将来追加する場合は `assets/js/sync.js` にRealtime購読を足す想定です。
 
@@ -183,7 +191,7 @@ JSONエクスポート・インポートを用意しています。
 
 `manifest.json` と `service-worker.js` は残していますが、Supabase同期確認中はService Worker登録を無効化しています。アプリ起動時に既存のService Worker登録を解除し、Cache Storageの既存cacheも削除します。
 
-`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-admin-all-tabs` を確認してください。
+`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-session-refresh` を確認してください。
 
 ## 主なファイル
 

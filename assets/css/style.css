@@ -274,6 +274,12 @@ h3 {
   color: var(--danger);
 }
 
+.sync-notice.is-expired {
+  border-color: #ffd4a8;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .sync-test-result {
   margin: 10px 0 0;
   color: var(--muted);

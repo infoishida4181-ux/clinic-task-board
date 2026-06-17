@@ -18,25 +18,46 @@
     const baseUrl = config.url.replace(/\/$/, "");
     const anonKey = config.anonKey;
     let session = readSession();
+    let authExpired = Boolean(session && isSessionPastRefreshWindow(session));
+    let refreshCount = 0;
+    let refreshInFlight = null;
 
-    function authHeaders() {
+    function authHeaders(options = {}) {
+      const token = options.useAnonAuth ? anonKey : session ? session.access_token : anonKey;
       return {
         apikey: anonKey,
-        Authorization: `Bearer ${session ? session.access_token : anonKey}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       };
     }
 
     async function request(path, options = {}) {
+      if (!options.skipAuthRefresh) {
+        await ensureFreshSession();
+      }
+      const {
+        authRetry,
+        skipAuthRefresh,
+        useAnonAuth,
+        ...fetchOptions
+      } = options;
       const response = await fetch(`${baseUrl}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers: {
-          ...authHeaders(),
+          ...authHeaders({ useAnonAuth }),
           ...(options.headers || {})
         }
       });
       if (!response.ok) {
         const error = await buildSupabaseError(response, path);
+        if (!skipAuthRefresh && !authRetry && isExpiredJwtError(error)) {
+          // Refreshing once is enough to replace an expired JWT; replaying more than once can duplicate writes.
+          await refreshSession();
+          return request(path, {
+            ...options,
+            authRetry: true
+          });
+        }
         throw error;
       }
       if (response.status === 204) return null;
@@ -47,18 +68,21 @@
     async function signIn(email, password) {
       const data = await request("/auth/v1/token?grant_type=password", {
         method: "POST",
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password }),
+        skipAuthRefresh: true,
+        useAnonAuth: true
       });
-      session = data;
-      localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+      saveSession(data);
+      authExpired = false;
       return data;
     }
 
     async function signOut() {
       if (session) {
-        await request("/auth/v1/logout", { method: "POST" }).catch(() => null);
+        await request("/auth/v1/logout", { method: "POST", skipAuthRefresh: true }).catch(() => null);
       }
       session = null;
+      authExpired = false;
       localStorage.removeItem(SESSION_KEY);
     }
 
@@ -165,6 +189,7 @@
 
     async function runConnectionTest() {
       requireLogin();
+      const refreshCountBefore = refreshCount;
       const userId = session.user.id;
       const now = new Date().toISOString();
       const testTask = {
@@ -191,6 +216,7 @@
       return {
         userId,
         email: session.user.email,
+        sessionRefresh: refreshCount > refreshCountBefore,
         taskTypesSelect: true,
         tasksSelect: true,
         tasksInsert: true,
@@ -202,14 +228,82 @@
       return session;
     }
 
+    function isAuthExpired() {
+      return authExpired || Boolean(session && isSessionPastRefreshWindow(session));
+    }
+
+    function getAuthState() {
+      return {
+        hasSession: Boolean(session && session.access_token && session.user),
+        expired: isAuthExpired(),
+        email: session && session.user ? session.user.email || "" : "",
+        expiresAt: session && session.expires_at ? session.expires_at : null
+      };
+    }
+
     function requireLogin() {
       if (!session || !session.access_token || !session.user) {
         throw new Error("Supabaseにログインしていません。");
       }
+      if (authExpired && !session.refresh_token) {
+        throw createLoginExpiredError();
+      }
+    }
+
+    async function ensureFreshSession() {
+      if (!session || !session.access_token) return;
+      if (!isSessionPastRefreshWindow(session)) return;
+      // Refresh before REST calls when expires_at is known, avoiding predictable JWT expired failures.
+      await refreshSession();
+    }
+
+    async function refreshSession() {
+      if (!session || !session.refresh_token) {
+        authExpired = true;
+        throw createLoginExpiredError();
+      }
+      if (refreshInFlight) return refreshInFlight;
+      refreshInFlight = doRefreshSession();
+      try {
+        return await refreshInFlight;
+      } finally {
+        refreshInFlight = null;
+      }
+    }
+
+    async function doRefreshSession() {
+      // Refresh uses the public anon key plus refresh_token; never embed service_role or database secrets.
+      const response = await fetch(`${baseUrl}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ refresh_token: session.refresh_token })
+      });
+      if (!response.ok) {
+        authExpired = true;
+        const error = await buildSupabaseError(response, "/auth/v1/token?grant_type=refresh_token");
+        error.loginExpired = true;
+        throw error;
+      }
+      const data = await response.json();
+      saveSession(data);
+      authExpired = false;
+      refreshCount += 1;
+      return session;
+    }
+
+    function saveSession(data) {
+      session = normalizeSession(data, session);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     }
 
     return {
       getSession,
+      getAuthState,
+      isAuthExpired,
       signIn,
       signOut,
       loadAll,
@@ -218,6 +312,37 @@
       deleteTaskTypes,
       runConnectionTest
     };
+  }
+
+  function normalizeSession(data, previousSession = null) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiresIn = Number(data.expires_in || 0);
+    return {
+      ...data,
+      refresh_token: data.refresh_token || (previousSession ? previousSession.refresh_token : ""),
+      user: data.user || (previousSession ? previousSession.user : null),
+      expires_at: Number(data.expires_at || 0) || (expiresIn ? nowSeconds + expiresIn : null)
+    };
+  }
+
+  function isSessionPastRefreshWindow(currentSession) {
+    if (!currentSession || !currentSession.expires_at) return false;
+    const refreshLeewaySeconds = 60;
+    return Number(currentSession.expires_at) <= Math.floor(Date.now() / 1000) + refreshLeewaySeconds;
+  }
+
+  function isExpiredJwtError(error) {
+    if (!error || error.status !== 401) return false;
+    const text = `${error.message || ""} ${error.details || ""} ${error.hint || ""}`.toLowerCase();
+    return text.includes("jwt expired") || text.includes("invalid jwt") || text.includes("expired");
+  }
+
+  function createLoginExpiredError() {
+    const error = new Error("ログイン期限が切れました。再ログインしてください。");
+    error.status = 401;
+    error.code = "session_expired";
+    error.loginExpired = true;
+    return error;
   }
 
   async function buildSupabaseError(response, path) {
@@ -236,6 +361,7 @@
     error.hint = parsed && parsed.hint ? parsed.hint : "";
     error.code = parsed && parsed.code ? parsed.code : "";
     error.body = parsed || text;
+    error.loginExpired = isExpiredJwtError(error);
     return error;
   }
 

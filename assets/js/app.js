@@ -1,5 +1,5 @@
 const storage = window.ClinicTaskStorage;
-const APP_VERSION = "2026-06-17-admin-all-tabs";
+const APP_VERSION = "2026-06-17-session-refresh";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
@@ -104,7 +104,7 @@ function renderAppVersion() {
 
 async function tryInitialCloudLoad() {
   const status = syncManager.getStatus();
-  if (!status.configured || !status.loggedIn) return;
+  if (!status.configured || !status.hasSession) return;
   state = await syncManager.loadFromSupabase(state);
 }
 
@@ -132,6 +132,7 @@ function renderSyncStatus() {
   const labelMap = {
     local: "保存：この端末のみ",
     not_logged_in: "未ログイン",
+    expired: "ログイン期限切れ・端末内一時保存",
     supabase: "保存：Supabase同期中",
     offline: "保存：オフライン一時保存",
     failed: "Supabase保存失敗・端末内一時保存"
@@ -140,10 +141,11 @@ function renderSyncStatus() {
   const pendingCount = countPendingTasks();
   const pendingDeleteCount = countPendingDeletes();
   els.saveModeBadge.textContent = label;
-  els.loginStatusText.textContent = status.loggedIn ? `ログイン中：${status.email}` : status.configured ? "未ログイン" : "Supabase未設定";
+  els.loginStatusText.textContent = loginStatusLabel(status);
   els.syncNotice.classList.toggle("is-supabase", status.status === "supabase");
   els.syncNotice.classList.toggle("is-offline", status.status === "offline");
   els.syncNotice.classList.toggle("is-failed", status.status === "failed");
+  els.syncNotice.classList.toggle("is-expired", status.status === "expired");
   els.syncNotice.innerHTML = `
     <strong>${escapeHtml(label)}</strong>
     <span>${escapeHtml(syncStatusMessage(status, pendingCount, pendingDeleteCount))}</span>
@@ -158,10 +160,18 @@ function syncStatusMessage(status, pendingCount, pendingDeleteCount) {
   const pendingText = pendingCount ? ` 未同期タスク：${pendingCount}件。` : "";
   const deleteText = pendingDeleteCount ? ` 削除待ちタスク：${pendingDeleteCount}件。` : "";
   if (status.status === "supabase") return `ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。${pendingText}${deleteText}`;
+  if (status.status === "expired") return `ログイン期限が切れました。再ログインしてください。未同期タスクと削除待ちタスクは端末内に保持しています。${pendingText}${deleteText}`;
   if (status.status === "failed") return `Supabase保存に失敗しました。タスクは端末内に残しています。${pendingText}${deleteText}${status.lastError || ""}`;
   if (status.status === "offline") return `Supabase接続に失敗しました。localStorage版として継続します。${status.lastError || ""}`;
   if (status.status === "not_logged_in") return "Supabase設定はあります。ログインすると同期を使えます。";
   return "Supabase設定がないため、これまで通りlocalStorageだけで動作します。";
+}
+
+function loginStatusLabel(status) {
+  if (!status.configured) return "Supabase未設定";
+  if (status.expired || status.status === "expired") return `ログイン期限切れ：再ログインしてください${status.email ? `（${status.email}）` : ""}`;
+  if (status.loggedIn) return `ログイン中：${status.email}`;
+  return "未ログイン";
 }
 
 function countPendingTasks() {
@@ -473,7 +483,7 @@ async function saveTaskFromForm(event) {
     archived: false,
     updated_at: now,
     synced: false,
-    pendingSync: Boolean(syncManager.getStatus().loggedIn),
+    pendingSync: shouldQueueSupabaseChange(),
     sync_error: ""
   };
 
@@ -545,7 +555,7 @@ async function handleTaskAction(action, taskId) {
 }
 
 function markTaskPending(task) {
-  if (!syncManager.getStatus().loggedIn) return;
+  if (!shouldQueueSupabaseChange()) return;
   task.synced = false;
   task.pendingSync = true;
   task.pendingDelete = false;
@@ -554,11 +564,16 @@ function markTaskPending(task) {
 
 function markTaskDeleted(task, now = new Date().toISOString()) {
   task.deleted_at = now;
-  task.pendingDelete = Boolean(syncManager.getStatus().loggedIn);
+  task.pendingDelete = shouldQueueSupabaseChange();
   task.pendingSync = false;
   task.synced = false;
   task.updated_at = now;
   task.sync_error = "";
+}
+
+function shouldQueueSupabaseChange() {
+  const status = syncManager.getStatus();
+  return Boolean(status.hasSession);
 }
 
 function openTypeModal(type = null) {
@@ -803,6 +818,7 @@ async function runSupabaseConnectionTest() {
   if (result.ok) {
     resultBox.textContent = [
       "接続テストOK",
+      `セッション更新：${result.result.sessionRefresh ? "OK" : "不要"}`,
       `ログインユーザーID：${result.result.userId}`,
       `メール：${result.result.email || ""}`,
       "task_types select OK",
@@ -813,7 +829,7 @@ async function runSupabaseConnectionTest() {
     return;
   }
   resultBox.textContent = [
-    "接続テスト失敗",
+    result.error && result.error.loginExpired ? "ログイン期限切れ。再ログインしてください。" : "接続テスト失敗",
     `HTTP status：${result.error && result.error.status ? result.error.status : ""}`,
     `message：${result.error && result.error.message ? result.error.message : ""}`,
     `details：${result.error && result.error.details ? result.error.details : ""}`,
@@ -823,8 +839,14 @@ async function runSupabaseConnectionTest() {
 }
 
 function notifySaveFailure(saveResult) {
-  if (!saveResult || saveResult.ok !== false || !syncManager.getStatus().loggedIn) return;
+  if (!saveResult || saveResult.ok !== false) return;
+  const status = syncManager.getStatus();
+  if (!status.configured || (!status.hasSession && !status.expired)) return;
   if (saveResult.reason === "local" || saveResult.reason === "not_logged_in") return;
+  if (saveResult.reason === "expired" || status.expired) {
+    alert(`ログイン期限が切れました。再ログインしてください。\n未同期タスクと削除待ちタスクはこの端末に保持しています。`);
+    return;
+  }
   const hasPendingDelete = state.tasks.some((task) => task.pendingDelete);
   if (hasPendingDelete) {
     alert(`Supabase削除に失敗しました。端末内では削除済みとして保持し、次回同期時に再試行します。\n${syncManager.getStatus().lastError || ""}`);
