@@ -59,12 +59,13 @@
             }
           });
           const mergedSeededState = storage.mergeRemoteState(localState, seededState);
-          await persistStateAndDeleteDuplicates(mergedSeededState);
+          const result = await persistStateAndDeleteDuplicates(mergedSeededState);
+          const syncedSeededState = markStateSynced(mergedSeededState, result);
           status = "supabase";
           lastError = "";
           lastErrorDetail = null;
-          storage.saveLocalState(mergedSeededState);
-          return mergedSeededState;
+          storage.saveLocalState(syncedSeededState);
+          return syncedSeededState;
         }
 
         const normalizedRemote = storage.normalizeState({
@@ -86,17 +87,18 @@
           }
         });
         const normalized = storage.mergeRemoteState(localState, normalizedRemote);
-        await persistStateAndDeleteDuplicates(normalized);
+        const result = await persistStateAndDeleteDuplicates(normalized);
+        const syncedState = markStateSynced(normalized, result);
         status = "supabase";
         lastError = "";
         lastErrorDetail = null;
-        storage.saveLocalState(normalized);
-        return normalized;
+        storage.saveLocalState(syncedState);
+        return syncedState;
       } catch (error) {
         status = error.loginExpired ? "expired" : "failed";
         lastError = formatSupabaseError(error);
         lastErrorDetail = errorToDetail(error);
-        // Never replace local data with empty remote state when the session expired.
+        // JWT expiry is an auth problem, not a data deletion signal; keep local work intact.
         console.error("Supabase load failed", lastErrorDetail || error);
         return localState;
       }
@@ -115,20 +117,7 @@
         lastError = "";
         lastErrorDetail = null;
         lastSaveResult = result;
-        const syncedState = storage.normalizeState(normalizedForSave);
-        syncedState.tasks = syncedState.tasks.map((task) => ({
-          ...task,
-          user_id: result.userId,
-          synced: true,
-          pendingSync: false,
-          pendingDelete: false,
-          sync_error: ""
-        }));
-        syncedState.sync = {
-          ...(state.sync || {}),
-          mode: "supabase",
-          last_synced_at: new Date().toISOString()
-        };
+        const syncedState = markStateSynced(normalizedForSave, result);
         storage.saveLocalState(syncedState);
         return { ok: true, state: syncedState, result };
       } catch (error) {
@@ -215,12 +204,33 @@
       return result;
     }
 
+    function markStateSynced(state, result) {
+      const syncedState = storage.normalizeState(state);
+      syncedState.tasks = syncedState.tasks.map((task) => ({
+        ...task,
+        user_id: result.userId,
+        synced: true,
+        pendingSync: false,
+        pendingDelete: false,
+        sync_error: ""
+      }));
+      syncedState.sync = {
+        ...(state.sync || {}),
+        mode: "supabase",
+        last_loaded_at: state.sync ? state.sync.last_loaded_at || null : null,
+        last_synced_at: new Date().toISOString()
+      };
+      return syncedState;
+    }
+
     function ensureConfigured() {
       if (!client) throw new Error("Supabase設定がありません。assets/js/config.js を作成してください。");
     }
 
     function ensureLoggedIn() {
       ensureConfigured();
+      // Even in single-user clinic mode, Auth + RLS gate clinic data by auth.uid().
+      // Do not fall back to public anon-only access because chart numbers identify patients inside the clinic.
       if (!client.getSession()) throw new Error("Supabaseにログインしてください。");
     }
 

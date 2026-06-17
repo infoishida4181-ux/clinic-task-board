@@ -4,6 +4,11 @@
 
 ## 固定方針
 
+- 院内シングルユーザー運用を想定する
+- スマホ・院内iPad・PCでは、基本的に1つのSupabaseユーザーを共有して同期する
+- Supabase AuthとRLSはデータ保護のため維持する
+- 日常利用では初回ログイン後、自動同期し、ログインを意識させない
+- 完全ログインなし公開テーブルにはしない
 - 患者名は保存しない
 - 患者マスターは作らない
 - 保存する患者識別情報はカルテ番号のみ
@@ -43,17 +48,17 @@
 - 後で整理: 期限なし、その他、種別未選択のタスク
 - 完了済み: 完了したタスク
 - タスク種別: 種別マスターの追加・編集・並び替え・非表示・削除
-- 設定: Supabaseログイン、移行、再読み込み、JSONエクスポート・インポート
+- 設定: 保存状態、詳細設定、JSONエクスポート・インポート
 
 ## 保存モード
 
 ヘッダーと設定画面に現在の保存モードを表示します。
 
 - `保存：この端末のみ`: Supabase未設定。localStorageのみで動作
-- `未ログイン`: Supabase設定はあるが未ログイン
-- `ログイン期限切れ・端末内一時保存`: 保存済みJWTを更新できないため、再ログインが必要
+- `保存：この端末のみ`: Supabase設定はあるが未ログイン。詳細設定から初回ログインが必要
+- `保存：ログイン期限切れ・端末内一時保存`: 保存済みJWTを更新できないため、詳細設定から再ログインが必要
 - `保存：Supabase同期中`: ログイン済み。変更をlocalStorageへ保存し、Supabaseへも保存
-- `保存：オフライン一時保存`: Supabase保存に失敗。localStorage版として継続
+- `保存：Supabase保存失敗・端末内一時保存`: Supabase保存に失敗。localStorage版として継続
 
 localStorageキーは以下です。
 
@@ -78,6 +83,16 @@ window.SUPABASE_CONFIG = {
 
 Supabase設定がない場合、アプリはこれまで通りlocalStorage版として動きます。
 
+## 院内シングルユーザー同期モード
+
+このアプリは、複数ユーザーの権限管理ツールではなく、院内で自分が使うタスクをスマホ・院内iPad・PCで共有するためのシングルユーザー同期モードを想定しています。
+
+Supabase Authはログイン管理を前面に出すためではなく、RLSで `auth.uid()` ごとに `tasks` / `task_types` を保護するために維持します。完全ログインなし公開テーブル、RLS無効化、anon keyだけで誰でも読める設計、service_role keyやDB passwordやJWT secretをフロントに置く設計にはしません。
+
+初回だけ詳細設定からSupabaseにログインします。一度sessionが保存されると、次回起動時は自動でsessionを確認し、JWT期限切れが近い場合は `refresh_token` で更新し、Supabaseから読み込み、未同期タスク送信と削除待ちタスクの削除再試行を行います。
+
+再ログインが必要なのは、`refresh_token` が無効になった場合やsession更新に失敗した場合だけです。その場合も、localStorage内のタスク、未同期タスク、削除待ちタスク、削除済み墓標は消しません。
+
 ## Supabase schema
 
 `supabase/schema.sql` に以下を含めています。
@@ -93,9 +108,15 @@ Supabase設定がない場合、アプリはこれまで通りlocalStorage版と
 
 既存localStorageのIDを移行しやすくするため、`id` と `task_type_id` は `text` にしています。`user_id` は `auth.uid()` と紐づける前提です。
 
+## 詳細設定
+
+設定画面では、通常は保存状態と未同期件数だけを表示します。メールアドレス、パスワード、ログイン、ログアウト、Supabase接続テスト、localStorageデータ移行、Supabaseから再読み込みは `詳細設定を開く` の中にあります。
+
+日常利用では詳細設定を開かなくても、ログイン済みsessionがあれば自動同期します。
+
 ## localStorageからSupabaseへの移行
 
-設定画面の `localStorageデータをSupabaseへ移行` を使います。
+詳細設定内の `localStorageデータをSupabaseへ移行` を使います。
 
 移行時は、カルテ番号がSupabaseに保存されることを確認するダイアログを出します。現在の実装は `id` が同じものを更新し、ないものを追加するupsert方式です。最初は空のSupabase、または移行先として上書き・統合して問題ない環境で実行してください。
 
@@ -109,7 +130,7 @@ Supabaseログイン時に `task_types` が0件だった場合は、localStorage
 
 タスク削除時はlocalStorageに `deleted_at` を記録し、Supabaseログイン済みの場合は `pendingDelete=true` としてSupabaseの `tasks` deleteを実行します。削除済みタスクは通常画面・件数・Supabase再読み込み結果に表示しません。Supabase削除に失敗した場合も端末内では削除済みとして保持し、次回同期時に削除を再試行します。
 
-設定画面の `Supabase接続テスト` では、ログインユーザーID、`task_types` select、`tasks` select、`tasks` test insert、`tasks` test delete を確認します。失敗時はHTTP status、message、details、hint、pathを表示します。
+詳細設定内の `Supabase接続テスト` では、ログインユーザーID、`task_types` select、`tasks` select、`tasks` test insert、`tasks` test delete を確認します。失敗時はHTTP status、message、details、hint、pathを詳細設定内に表示します。
 
 Supabase REST APIで `JWT expired` が出た場合は、保存済みの `refresh_token` でセッション更新を試みます。更新に成功した場合は失敗したAPIを1回だけ再実行し、接続テストでは `セッション更新：OK` と表示します。更新できない場合は `ログイン期限切れ・端末内一時保存` と表示し、再ログインを促します。この場合もlocalStorageの未同期タスク、削除待ちタスク、削除済み墓標は消しません。
 
@@ -191,7 +212,7 @@ JSONエクスポート・インポートを用意しています。
 
 `manifest.json` と `service-worker.js` は残していますが、Supabase同期確認中はService Worker登録を無効化しています。アプリ起動時に既存のService Worker登録を解除し、Cache Storageの既存cacheも削除します。
 
-`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-session-refresh` を確認してください。
+`service-worker.js` もno-op化しており、install / activate時に既存cacheを削除し、fetchでは古い `index.html` やJSを返しません。スマホやGitHub Pagesで最新版が反映されない場合は、画面の設定に表示される `Version: 2026-06-17-single-user-sync` を確認してください。
 
 ## 主なファイル
 

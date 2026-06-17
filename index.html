@@ -160,34 +160,45 @@
             <strong>保存：この端末のみ</strong>
             <span>Supabase設定がない場合は、これまで通りlocalStorageだけで動作します。</span>
           </div>
+          <div class="settings-block sync-summary-block">
+            <h3>保存状態</h3>
+            <p id="pendingSyncText">未同期タスク：0件 / 削除待ちタスク：0件</p>
+          </div>
+          <!-- Supabase Auth and RLS remain required for data protection; daily use hides credentials here. -->
+          <details class="advanced-settings" id="supabaseAdvancedDetails">
+            <summary>詳細設定を開く</summary>
+            <div class="advanced-settings-body">
+              <!-- Do not switch to public anon-only tables: chart numbers are clinic-identifying data. -->
+              <div class="settings-block">
+                <h3>Supabaseログイン</h3>
+                <p id="loginStatusText">未ログイン</p>
+                <label>
+                  <span>メールアドレス</span>
+                  <input id="loginEmail" type="email" autocomplete="username" placeholder="name@example.com">
+                </label>
+                <label>
+                  <span>パスワード</span>
+                  <input id="loginPassword" type="password" autocomplete="current-password">
+                </label>
+                <div class="task-actions">
+                  <button class="primary-button" id="loginButton" type="button">ログイン</button>
+                  <button class="ghost-button" id="logoutButton" type="button">ログアウト</button>
+                </div>
+              </div>
+              <div class="settings-block">
+                <h3>Supabase同期</h3>
+                <p>カルテ番号をクラウドに保存します。AuthとRLSを有効にした環境だけで使ってください。</p>
+                <div class="task-actions">
+                  <button class="primary-button" id="migrateButton" type="button">localStorageデータをSupabaseへ移行</button>
+                  <button class="ghost-button" id="reloadSupabaseButton" type="button">Supabaseから再読み込み</button>
+                  <button class="ghost-button" id="connectionTestButton" type="button">Supabase接続テスト</button>
+                </div>
+                <p class="sync-test-result" id="connectionTestResult"></p>
+                <p class="sync-error-detail" id="syncErrorDetail"></p>
+              </div>
+            </div>
+          </details>
           <div class="settings-grid">
-            <div class="settings-block">
-              <h3>Supabaseログイン</h3>
-              <p id="loginStatusText">未ログイン</p>
-              <label>
-                <span>メールアドレス</span>
-                <input id="loginEmail" type="email" autocomplete="username" placeholder="name@example.com">
-              </label>
-              <label>
-                <span>パスワード</span>
-                <input id="loginPassword" type="password" autocomplete="current-password">
-              </label>
-              <div class="task-actions">
-                <button class="primary-button" id="loginButton" type="button">ログイン</button>
-                <button class="ghost-button" id="logoutButton" type="button">ログアウト</button>
-              </div>
-            </div>
-            <div class="settings-block">
-              <h3>Supabase同期</h3>
-              <p>カルテ番号をクラウドに保存します。AuthとRLSを有効にした環境だけで使ってください。</p>
-              <div class="task-actions">
-                <button class="primary-button" id="migrateButton" type="button">localStorageデータをSupabaseへ移行</button>
-                <button class="ghost-button" id="reloadSupabaseButton" type="button">Supabaseから再読み込み</button>
-                <button class="ghost-button" id="connectionTestButton" type="button">Supabase接続テスト</button>
-              </div>
-              <p id="pendingSyncText">未同期タスク：0件 / 削除待ちタスク：0件</p>
-              <p class="sync-test-result" id="connectionTestResult"></p>
-            </div>
             <div class="settings-block">
               <h3>タスク種別の復旧</h3>
               <p>初期タスク種別の不足分だけを追加し、非表示になっている初期種別は表示に戻します。</p>
@@ -213,7 +224,7 @@
             </div>
             <div class="settings-block">
               <h3>バージョン</h3>
-              <p id="appVersionText">Version: 2026-06-17-session-refresh</p>
+              <p id="appVersionText">Version: 2026-06-17-single-user-sync</p>
               <p>Supabase同期確認中はService Workerを無効化しています。</p>
             </div>
           </div>

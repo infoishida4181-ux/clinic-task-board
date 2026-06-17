@@ -1,5 +1,5 @@
 const storage = window.ClinicTaskStorage;
-const APP_VERSION = "2026-06-17-session-refresh";
+const APP_VERSION = "2026-06-17-single-user-sync";
 const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
@@ -42,7 +42,8 @@ const els = {
   typeList: $("#typeList"),
   saveModeBadge: $("#saveModeBadge"),
   syncNotice: $("#syncNotice"),
-  loginStatusText: $("#loginStatusText")
+  loginStatusText: $("#loginStatusText"),
+  syncErrorDetail: $("#syncErrorDetail")
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -105,6 +106,8 @@ function renderAppVersion() {
 async function tryInitialCloudLoad() {
   const status = syncManager.getStatus();
   if (!status.configured || !status.hasSession) return;
+  // Single-user clinic mode: an existing Auth session is treated as the device sync credential.
+  // loadFromSupabase refreshes JWTs, merges remote data, sends pending edits, and retries pending deletes.
   state = await syncManager.loadFromSupabase(state);
 }
 
@@ -131,11 +134,11 @@ function renderSyncStatus() {
   const status = syncManager.getStatus();
   const labelMap = {
     local: "保存：この端末のみ",
-    not_logged_in: "未ログイン",
-    expired: "ログイン期限切れ・端末内一時保存",
+    not_logged_in: "保存：この端末のみ",
+    expired: "保存：ログイン期限切れ・端末内一時保存",
     supabase: "保存：Supabase同期中",
     offline: "保存：オフライン一時保存",
-    failed: "Supabase保存失敗・端末内一時保存"
+    failed: "保存：Supabase保存失敗・端末内一時保存"
   };
   const label = labelMap[status.status] || "保存：この端末のみ";
   const pendingCount = countPendingTasks();
@@ -154,16 +157,17 @@ function renderSyncStatus() {
   if (pendingText) {
     pendingText.textContent = `未同期タスク：${pendingCount}件 / 削除待ちタスク：${pendingDeleteCount}件`;
   }
+  renderSyncErrorDetail(status);
 }
 
 function syncStatusMessage(status, pendingCount, pendingDeleteCount) {
   const pendingText = pendingCount ? ` 未同期タスク：${pendingCount}件。` : "";
   const deleteText = pendingDeleteCount ? ` 削除待ちタスク：${pendingDeleteCount}件。` : "";
-  if (status.status === "supabase") return `ログイン済みです。変更はlocalStorageに保存したうえでSupabaseへ同期します。${pendingText}${deleteText}`;
-  if (status.status === "expired") return `ログイン期限が切れました。再ログインしてください。未同期タスクと削除待ちタスクは端末内に保持しています。${pendingText}${deleteText}`;
-  if (status.status === "failed") return `Supabase保存に失敗しました。タスクは端末内に残しています。${pendingText}${deleteText}${status.lastError || ""}`;
-  if (status.status === "offline") return `Supabase接続に失敗しました。localStorage版として継続します。${status.lastError || ""}`;
-  if (status.status === "not_logged_in") return "Supabase設定はあります。ログインすると同期を使えます。";
+  if (status.status === "supabase") return `初回ログイン後の自動同期モードです。変更は端末内に保存してからSupabaseへ同期します。${pendingText}${deleteText}`;
+  if (status.status === "expired") return `ログイン期限が切れました。詳細設定から再ログインしてください。タスクはこの端末内に一時保存されています。${pendingText}${deleteText}`;
+  if (status.status === "failed") return `Supabase保存に失敗しました。タスクはこの端末内に一時保存されています。詳細は詳細設定で確認できます。${pendingText}${deleteText}`;
+  if (status.status === "offline") return "Supabase接続に失敗しました。この端末内の保存で継続します。";
+  if (status.status === "not_logged_in") return "詳細設定から初回ログインしてください。ログイン後はこの端末で自動同期します。";
   return "Supabase設定がないため、これまで通りlocalStorageだけで動作します。";
 }
 
@@ -172,6 +176,23 @@ function loginStatusLabel(status) {
   if (status.expired || status.status === "expired") return `ログイン期限切れ：再ログインしてください${status.email ? `（${status.email}）` : ""}`;
   if (status.loggedIn) return `ログイン中：${status.email}`;
   return "未ログイン";
+}
+
+function renderSyncErrorDetail(status) {
+  if (!els.syncErrorDetail) return;
+  if (!status.lastError && !status.lastErrorDetail) {
+    els.syncErrorDetail.textContent = "";
+    return;
+  }
+  const detail = status.lastErrorDetail;
+  const lines = ["同期エラー詳細"];
+  if (status.lastError) lines.push(status.lastError);
+  if (detail && detail.status) lines.push(`HTTP status：${detail.status}`);
+  if (detail && detail.message) lines.push(`message：${detail.message}`);
+  if (detail && detail.details) lines.push(`details：${detail.details}`);
+  if (detail && detail.hint) lines.push(`hint：${detail.hint}`);
+  if (detail && detail.path) lines.push(`path：${detail.path}`);
+  els.syncErrorDetail.textContent = lines.join("\n");
 }
 
 function countPendingTasks() {

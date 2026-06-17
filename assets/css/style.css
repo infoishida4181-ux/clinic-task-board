@@ -286,6 +286,48 @@ h3 {
   white-space: pre-wrap;
 }
 
+.sync-error-detail {
+  margin: 8px 0 0;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
+.sync-summary-block {
+  margin-bottom: 10px;
+}
+
+.sync-summary-block p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.advanced-settings {
+  margin-bottom: 10px;
+}
+
+.advanced-settings summary {
+  width: fit-content;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--primary-dark);
+  padding: 9px 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.advanced-settings[open] summary {
+  margin-bottom: 10px;
+}
+
+.advanced-settings-body {
+  display: grid;
+  gap: 10px;
+}
+
 .task-card,
 .type-card,
 .settings-block {
@@ -643,6 +685,10 @@ code {
 
   .type-list,
   .settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .advanced-settings-body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
