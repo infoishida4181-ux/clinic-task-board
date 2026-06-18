@@ -4,12 +4,14 @@ const syncManager = window.ClinicTaskSync.createSyncManager({
   storage,
   supabase: window.ClinicTaskSupabase
 });
+const NEW_TASK_DEFAULT_DUE_TYPE = "custom";
+const TYPE_DEFAULT_DUE_TYPES = new Set(["today", "tomorrow", "this_week", "next_week"]);
 
 let state = storage.loadLocalState();
 storage.saveLocalState(state);
 let activeView = "today";
 let selectedTypeId = "";
-let selectedDueType = "today";
+let selectedDueType = NEW_TASK_DEFAULT_DUE_TYPE;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -374,7 +376,7 @@ function chooseTaskType(typeId) {
   const type = getTaskType(typeId);
   if (!type) return;
   $("#taskTitle").value = type.name;
-  chooseDueType(type.default_due_type || "today");
+  chooseDueType(initialDueTypeForTaskType(type));
   updateChartModeHint();
   renderTypePicker();
   guideAfterTypeSelection(type);
@@ -396,6 +398,7 @@ function guideAfterTypeSelection(type) {
 function chooseDueType(dueType) {
   selectedDueType = dueType;
   $("#customDateWrap").hidden = dueType !== "custom";
+  setDueDateWarning("");
   updateDueButtons();
 }
 
@@ -458,7 +461,8 @@ function openTaskModal(task = null) {
     $("#taskTitle").focus();
     return;
   }
-  // Chairside entry starts at task-type buttons. Avoid auto-focus so mobile keyboards stay closed.
+  // New tasks default to date picking, but chairside entry starts at task-type buttons.
+  // Avoid focusing date/text inputs so mobile date pickers or keyboards do not open unexpectedly.
   setTimeout(() => {
     els.typePicker.scrollIntoView({ block: "start", behavior: "smooth" });
   }, 0);
@@ -473,8 +477,10 @@ function resetTaskForm() {
   $("#taskModalTitle").textContent = "タスク登録";
   $("#taskId").value = "";
   selectedTypeId = "";
-  selectedDueType = "today";
-  $("#customDateWrap").hidden = true;
+  // Most clinic tasks need a due date; require an explicit date or an explicit "期限なし" choice.
+  selectedDueType = NEW_TASK_DEFAULT_DUE_TYPE;
+  $("#customDateWrap").hidden = false;
+  setDueDateWarning("");
   updateChartModeHint();
   updateDueButtons();
   renderTypePicker();
@@ -490,7 +496,13 @@ async function saveTaskFromForm(event) {
   }
 
   const rawTitle = $("#taskTitle").value.trim();
-  const dueDate = selectedDueType === "custom" ? $("#customDueDate").value || null : resolveDueDate(selectedDueType);
+  const dueResult = resolveDueDateForSave();
+  if (!dueResult.ok) {
+    // A blank custom date creates accidental no-due tasks, so stop before localStorage/Supabase writes.
+    setDueDateWarning(dueResult.message);
+    return;
+  }
+  const dueDate = dueResult.dueDate;
   const now = new Date().toISOString();
   const id = $("#taskId").value;
   const payload = {
@@ -595,6 +607,32 @@ function markTaskDeleted(task, now = new Date().toISOString()) {
 function shouldQueueSupabaseChange() {
   const status = syncManager.getStatus();
   return Boolean(status.hasSession);
+}
+
+function initialDueTypeForTaskType(type) {
+  if (type && TYPE_DEFAULT_DUE_TYPES.has(type.default_due_type)) {
+    return type.default_due_type;
+  }
+  return NEW_TASK_DEFAULT_DUE_TYPE;
+}
+
+function resolveDueDateForSave() {
+  if (selectedDueType === "custom") {
+    const dueDate = $("#customDueDate").value || "";
+    if (!dueDate) {
+      return {
+        ok: false,
+        message: "期限日を選択してください。期限なしで登録する場合は『期限なし』を選択してください。"
+      };
+    }
+    return { ok: true, dueDate };
+  }
+  return { ok: true, dueDate: resolveDueDate(selectedDueType) };
+}
+
+function setDueDateWarning(message) {
+  const hint = $("#dueDateHint");
+  if (hint) hint.textContent = message;
 }
 
 function openTypeModal(type = null) {
