@@ -5,13 +5,13 @@ const syncManager = window.ClinicTaskSync.createSyncManager({
   supabase: window.ClinicTaskSupabase
 });
 const NEW_TASK_DEFAULT_DUE_TYPE = "custom";
-const TYPE_DEFAULT_DUE_TYPES = new Set(["today", "tomorrow", "this_week", "next_week"]);
 
 let state = storage.loadLocalState();
 storage.saveLocalState(state);
 let activeView = "today";
 let selectedTypeId = "";
 let selectedDueType = NEW_TASK_DEFAULT_DUE_TYPE;
+let calendarViewDate = startOfMonth(new Date());
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -86,6 +86,8 @@ function bindEvents() {
   $$(".due-picker button").forEach((button) => {
     button.addEventListener("click", () => chooseDueType(button.dataset.due));
   });
+  $("#calendarPrevMonth").addEventListener("click", () => moveCalendarMonth(-1));
+  $("#calendarNextMonth").addEventListener("click", () => moveCalendarMonth(1));
 
   els.taskForm.addEventListener("submit", saveTaskFromForm);
   els.typeForm.addEventListener("submit", saveTypeFromForm);
@@ -128,7 +130,7 @@ function render() {
   renderTaskLists();
   renderTypePicker();
   renderTypeList();
-  updateDueButtons();
+  updateDueControls();
   renderSyncStatus();
 }
 
@@ -376,7 +378,9 @@ function chooseTaskType(typeId) {
   const type = getTaskType(typeId);
   if (!type) return;
   $("#taskTitle").value = type.name;
-  chooseDueType(initialDueTypeForTaskType(type));
+  // Task type decides what to do, not when to do it. In new-entry flow, keep the explicit date-choice state.
+  // default_due_type remains editable in the type master, but is not auto-applied on selection to avoid silent deadline changes.
+  updateDueControls();
   updateChartModeHint();
   renderTypePicker();
   guideAfterTypeSelection(type);
@@ -386,7 +390,7 @@ function guideAfterTypeSelection(type) {
   const chartInput = $("#chartNumber");
   const duePicker = $(".due-picker");
   if (type.chart_number_mode === "required") {
-    chartInput.focus();
+    // Show the next relevant input without focusing it; mobile keyboards should open only by user tap.
     chartInput.scrollIntoView({ block: "center", behavior: "smooth" });
     return;
   }
@@ -397,15 +401,25 @@ function guideAfterTypeSelection(type) {
 
 function chooseDueType(dueType) {
   selectedDueType = dueType;
-  $("#customDateWrap").hidden = dueType !== "custom";
   setDueDateWarning("");
-  updateDueButtons();
+  if (dueType === "none") {
+    $("#customDueDate").value = "";
+  } else if (dueType !== "custom") {
+    // Relative due choices still keep their type, while the calendar mirrors the concrete saved date.
+    setSelectedDueDate(resolveDueDate(dueType));
+  } else if ($("#customDueDate").value) {
+    syncCalendarToSelectedDate();
+  }
+  updateDueControls();
 }
 
-function updateDueButtons() {
+function updateDueControls() {
   $$(".due-picker button").forEach((button) => {
     button.classList.toggle("is-selected", button.dataset.due === selectedDueType);
   });
+  $("#customDateWrap").hidden = selectedDueType === "none";
+  renderInlineCalendar();
+  updateDueResolvedText();
 }
 
 function updateChartModeHint() {
@@ -445,16 +459,17 @@ function openTaskModal(task = null) {
     $("#taskMemo").value = task.memo || "";
     if (task.due_date) {
       selectedDueType = "custom";
-      $("#customDueDate").value = task.due_date;
+      setSelectedDueDate(task.due_date);
       $("#customDateWrap").hidden = false;
     } else {
       selectedDueType = "none";
+      $("#customDueDate").value = "";
       $("#customDateWrap").hidden = true;
     }
     if (type) updateChartModeHint();
   }
   renderTypePicker();
-  updateDueButtons();
+  updateDueControls();
   els.taskModal.hidden = false;
 
   if (task) {
@@ -479,10 +494,12 @@ function resetTaskForm() {
   selectedTypeId = "";
   // Most clinic tasks need a due date; require an explicit date or an explicit "期限なし" choice.
   selectedDueType = NEW_TASK_DEFAULT_DUE_TYPE;
+  $("#customDueDate").value = "";
+  calendarViewDate = startOfMonth(new Date());
   $("#customDateWrap").hidden = false;
   setDueDateWarning("");
   updateChartModeHint();
-  updateDueButtons();
+  updateDueControls();
   renderTypePicker();
 }
 
@@ -609,13 +626,6 @@ function shouldQueueSupabaseChange() {
   return Boolean(status.hasSession);
 }
 
-function initialDueTypeForTaskType(type) {
-  if (type && TYPE_DEFAULT_DUE_TYPES.has(type.default_due_type)) {
-    return type.default_due_type;
-  }
-  return NEW_TASK_DEFAULT_DUE_TYPE;
-}
-
 function resolveDueDateForSave() {
   if (selectedDueType === "custom") {
     const dueDate = $("#customDueDate").value || "";
@@ -633,6 +643,76 @@ function resolveDueDateForSave() {
 function setDueDateWarning(message) {
   const hint = $("#dueDateHint");
   if (hint) hint.textContent = message;
+}
+
+function updateDueResolvedText() {
+  const preview = $("#dueResolvedText");
+  if (!preview) return;
+  const dueDate = selectedDueType === "custom" ? $("#customDueDate").value : resolveDueDate(selectedDueType);
+  if (selectedDueType === "none") {
+    preview.textContent = "期限：期限なし";
+    return;
+  }
+  if (!dueDate) {
+    preview.textContent = selectedDueType === "custom" ? "期限：日付指定（未選択）" : "";
+    return;
+  }
+  if (selectedDueType === "custom") {
+    preview.textContent = `期限：日付指定（${dueDate}）`;
+    return;
+  }
+  // Relative due buttons keep their type, while showing the concrete date that will be saved.
+  preview.textContent = `期限：${dueTypeLabel(selectedDueType)}（${dueDate}）`;
+}
+
+function setSelectedDueDate(dateString) {
+  $("#customDueDate").value = dateString || "";
+  if (dateString) {
+    calendarViewDate = startOfMonth(parseLocalDate(dateString));
+  }
+}
+
+function syncCalendarToSelectedDate() {
+  const dueDate = $("#customDueDate").value;
+  if (dueDate) calendarViewDate = startOfMonth(parseLocalDate(dueDate));
+}
+
+function moveCalendarMonth(delta) {
+  calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + delta, 1);
+  renderInlineCalendar();
+}
+
+function selectCalendarDate(dateString) {
+  selectedDueType = "custom";
+  setSelectedDueDate(dateString);
+  setDueDateWarning("");
+  updateDueControls();
+}
+
+function renderInlineCalendar() {
+  const grid = $("#inlineCalendarGrid");
+  const title = $("#calendarMonthTitle");
+  if (!grid || !title) return;
+  const monthStart = startOfMonth(calendarViewDate);
+  const firstVisible = addDays(monthStart, -monthStart.getDay());
+  const todayString = toDateInputValue(new Date());
+  const selectedString = $("#customDueDate").value;
+  title.textContent = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`;
+  grid.innerHTML = Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(firstVisible, index);
+    const dateString = toDateInputValue(date);
+    const classes = [
+      "calendar-day",
+      date.getMonth() !== monthStart.getMonth() ? "is-outside" : "",
+      dateString === todayString ? "is-today" : "",
+      dateString === selectedString ? "is-selected" : "",
+      date < startOfDay(new Date()) ? "is-past" : ""
+    ].filter(Boolean).join(" ");
+    return `<button type="button" class="${classes}" data-calendar-date="${dateString}" aria-label="${dateString}">${date.getDate()}</button>`;
+  }).join("");
+  grid.querySelectorAll("[data-calendar-date]").forEach((button) => {
+    button.addEventListener("click", () => selectCalendarDate(button.dataset.calendarDate));
+  });
 }
 
 function openTypeModal(type = null) {
@@ -1073,6 +1153,10 @@ function parseLocalDate(value) {
 
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function startOfMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
 function toDateInputValue(date) {

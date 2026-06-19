@@ -269,10 +269,25 @@
             <button type="button" data-due="none">期限なし</button>
           </div>
 
-          <label id="customDateWrap" hidden>
-            <span>日付指定</span>
-            <input id="customDueDate" type="date">
-          </label>
+          <section class="inline-calendar" id="customDateWrap" hidden aria-label="期限日のカレンダー">
+            <div class="calendar-head">
+              <button class="ghost-button" id="calendarPrevMonth" type="button">前月</button>
+              <strong id="calendarMonthTitle">----</strong>
+              <button class="ghost-button" id="calendarNextMonth" type="button">次月</button>
+            </div>
+            <div class="calendar-weekdays" aria-hidden="true">
+              <span>日</span>
+              <span>月</span>
+              <span>火</span>
+              <span>水</span>
+              <span>木</span>
+              <span>金</span>
+              <span>土</span>
+            </div>
+            <div class="calendar-grid" id="inlineCalendarGrid"></div>
+            <input id="customDueDate" type="hidden">
+          </section>
+          <p class="due-resolved-text" id="dueResolvedText"></p>
           <p class="form-warning" id="dueDateHint" aria-live="polite"></p>
 
           <label>
